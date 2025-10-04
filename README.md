@@ -1,6 +1,6 @@
 # Grid Core API
 
-![Grid Banner](../grid-docs/readme-assets/banner.png)
+![Grid Banner](readme-assets/banner.png)
 
 > **The heart of Grid Platform** - Infrastructure Orchestration Platform API
 
