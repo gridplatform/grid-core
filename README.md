@@ -1,52 +1,30 @@
-# Grid Core API
+# Grid Core
 
-![Grid Banner](readme-assets/banner.png)
+HTTP API for Grid Console. Accepts deploy requests, maps them to CLI `grid.json`, runs `grid generate` + Terraform apply, and streams status/logs.
 
-> **The heart of Grid Platform** - Backend API for Infrastructure Orchestration Platform
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-43853D?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Express](https://img.shields.io/badge/Express.js-404D59?logo=express&logoColor=white)](https://expressjs.com/)
-
-## 🎯 Purpose
-
-Grid Core is the central API service that powers the Grid Infrastructure Orchestration Platform. It provides infrastructure deployment, management, and orchestration capabilities across multiple cloud providers.
-
-## ✨ Key Features
-
-- **Multi-Cloud Support** - Deploy to GCP, AWS, and Azure
-- **Infrastructure as Code** - Terraform-based deployments
-- **Real-time Updates** - WebSocket status updates
-- **Environment Management** - Create, clone, and manage environments
-- **Release Queue** - Prevent concurrent deployments
-- **Built-in Monitoring** - Automatic health checks and metrics
-- **RESTful API** - Clean, documented endpoints
-
-## 🚀 Quick Start
+## Run
 
 ```bash
-# Clone the repository
-git clone https://github.com/gridplatform/grid-core.git
 cd grid-core
-
-# Install dependencies
+cp -n .env.example .env   # if present
 npm install
-
-# Start development server
 npm run dev
 ```
 
-## 📚 Learn More
+Listens on `http://localhost:3000` (`PORT`).
 
-- **📖 [Full Documentation](https://github.com/gridplatform/grid-docs)** - Complete API reference and guides
-- **💬 [Discord Community](https://discord.gg/gridplatform)** - Get help and connect with users
-- **🐛 [Report Issues](https://github.com/gridplatform/grid-core/issues)** - Found a bug? Let us know!
+## Useful env
 
-## 🤝 Contributing
+| Variable | Purpose |
+|----------|---------|
+| `GRID_CLI_ROOT` | Path to `grid-cli` (default: `../grid-cli`) |
+| `GRID_WORK_DIR` | Terraform workspaces |
+| `GRID_DATA_DIR` | JSON store |
+| `GRID_TERRAFORM_BIN` | `terraform` binary |
+| `GRID_AUTO_APPROVE` | Apply with `-auto-approve` (default true) |
 
-We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for details.
+## Deploy path
 
----
+`POST /api/v1/deployments` with a Grid console body (`name`, `engine`, `provider`, `environment`, `resourceType`, `config`).
 
-**Built with ❤️ by the Grid Platform team**
+Terraform engine on **aws** / **gcp** maps to CLI resources (`vpc` / `subnet` / `vm`) and reuses `runInfrastructureDeploy`. Follow with `GET /api/v1/deployments/:id` and `.../logs`.
