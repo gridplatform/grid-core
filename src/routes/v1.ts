@@ -17,20 +17,9 @@ import {
   DeployMapError,
   mapDeployRequestToGridConfig,
 } from '../services/gridConfigMapper';
-import { isDeployEnabledForAnyProvider, productFlags } from '../config/featureFlags';
-import { TERRAFORM_RESOURCE_TYPES } from '../services/terraformResourceCatalog';
 import type { CloudProviderType, InfrastructureListItem } from '../types/api';
 
 const router = Router();
-
-function featureOff(res: { status: (c: number) => { json: (b: unknown) => void } }, key: string) {
-  res.status(403).json({ code: 'feature_disabled', message: `Feature "${key}" is disabled` });
-}
-
-/** Cluster endpoints stay open while any provider can still deploy a cluster. */
-function clustersEnabled(): boolean {
-  return TERRAFORM_RESOURCE_TYPES['kubernetes-cluster'].some(isDeployEnabledForAnyProvider);
-}
 
 const CreateInfraSchema = z.object({
   name: z.string().min(1),
@@ -94,24 +83,12 @@ router.post('/auth/logout', (_req, res) => {
   res.status(204).end();
 });
 
-router.get('/features', (_req, res) => {
-  res.json(productFlags);
-});
-
 router.get('/infrastructures', async (_req, res) => {
-  if (!productFlags.infrastructure) {
-    featureOff(res, 'infrastructure');
-    return;
-  }
   const items = await listInfrastructures();
   res.json(items.map((i) => toListItem(i)).filter(Boolean));
 });
 
 router.get('/infrastructures/:id', async (req, res) => {
-  if (!productFlags.infrastructure) {
-    featureOff(res, 'infrastructure');
-    return;
-  }
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
@@ -121,10 +98,6 @@ router.get('/infrastructures/:id', async (req, res) => {
 });
 
 router.post('/infrastructures', async (req, res) => {
-  if (!productFlags.infrastructure) {
-    featureOff(res, 'infrastructure');
-    return;
-  }
   const parsed = CreateInfraSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ code: 'validation_error', message: parsed.error.message });
@@ -146,10 +119,6 @@ router.post('/infrastructures', async (req, res) => {
 });
 
 router.post('/infrastructures/:id/deploy', async (req, res) => {
-  if (!productFlags.infrastructure || !productFlags.deployments) {
-    featureOff(res, !productFlags.infrastructure ? 'infrastructure' : 'deployments');
-    return;
-  }
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
@@ -167,10 +136,6 @@ router.post('/infrastructures/:id/deploy', async (req, res) => {
 });
 
 router.post('/infrastructures/:id/drift-check', async (req, res) => {
-  if (!productFlags.infrastructure) {
-    featureOff(res, 'infrastructure');
-    return;
-  }
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
@@ -180,10 +145,6 @@ router.post('/infrastructures/:id/drift-check', async (req, res) => {
 });
 
 router.post('/infrastructures/:id/clone', async (req, res) => {
-  if (!productFlags.infrastructure) {
-    featureOff(res, 'infrastructure');
-    return;
-  }
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
@@ -198,10 +159,6 @@ router.post('/infrastructures/:id/clone', async (req, res) => {
 });
 
 router.delete('/infrastructures/:id', async (req, res) => {
-  if (!productFlags.infrastructure) {
-    featureOff(res, 'infrastructure');
-    return;
-  }
   const items = await listInfrastructures();
   const target = items.find((i) => i.id === req.params.id);
   if (!target) {
@@ -215,18 +172,10 @@ router.delete('/infrastructures/:id', async (req, res) => {
 });
 
 router.get('/deployments', async (_req, res) => {
-  if (!productFlags.deployments) {
-    featureOff(res, 'deployments');
-    return;
-  }
   res.json(await listDeployments());
 });
 
 router.post('/deployments', async (req, res) => {
-  if (!productFlags.deployments) {
-    featureOff(res, 'deployments');
-    return;
-  }
   const parsed = CreateDeploymentSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ code: 'validation_error', message: parsed.error.message });
@@ -268,10 +217,6 @@ router.post('/deployments', async (req, res) => {
 });
 
 router.get('/deployments/:id', async (req, res) => {
-  if (!productFlags.deployments) {
-    featureOff(res, 'deployments');
-    return;
-  }
   const d = await getDeployment(req.params.id);
   if (!d) {
     res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
@@ -281,10 +226,6 @@ router.get('/deployments/:id', async (req, res) => {
 });
 
 router.get('/deployments/:id/logs', async (req, res) => {
-  if (!productFlags.deployments) {
-    featureOff(res, 'deployments');
-    return;
-  }
   const d = await getDeployment(req.params.id);
   if (!d) {
     res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
@@ -294,10 +235,6 @@ router.get('/deployments/:id/logs', async (req, res) => {
 });
 
 router.post('/deployments/:id/cancel', async (req, res) => {
-  if (!productFlags.deployments) {
-    featureOff(res, 'deployments');
-    return;
-  }
   const d = await getDeployment(req.params.id);
   if (!d) {
     res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
@@ -312,10 +249,6 @@ router.post('/deployments/:id/cancel', async (req, res) => {
 });
 
 router.post('/deployments/:id/retry', async (req, res) => {
-  if (!productFlags.deployments) {
-    featureOff(res, 'deployments');
-    return;
-  }
   const d = await getDeployment(req.params.id);
   if (!d) {
     res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
@@ -338,19 +271,11 @@ router.post('/deployments/:id/retry', async (req, res) => {
 });
 
 router.get('/topology/providers', async (_req, res) => {
-  if (!productFlags.topology) {
-    featureOff(res, 'topology');
-    return;
-  }
   const items = await listInfrastructures();
   res.json(buildTopologyFromInfrastructures(items));
 });
 
 router.get('/topology/providers/:id/vpcs', async (req, res) => {
-  if (!productFlags.topology) {
-    featureOff(res, 'topology');
-    return;
-  }
   const items = await listInfrastructures();
   const providers = buildTopologyFromInfrastructures(items);
   const provider = providers.find((p) => p.id === req.params.id);
@@ -358,10 +283,6 @@ router.get('/topology/providers/:id/vpcs', async (req, res) => {
 });
 
 router.get('/topology/vpcs/:id/resources', async (req, res) => {
-  if (!productFlags.topology) {
-    featureOff(res, 'topology');
-    return;
-  }
   const items = await listInfrastructures();
   const providers = buildTopologyFromInfrastructures(items);
   for (const p of providers) {
@@ -375,27 +296,13 @@ router.get('/topology/vpcs/:id/resources', async (req, res) => {
 });
 
 router.get('/topology/vpcs/:id/connections', (_req, res) => {
-  if (!productFlags.topology) {
-    featureOff(res, 'topology');
-    return;
-  }
   res.json([]);
 });
 
 const empty = (_req: unknown, res: { json: (b: unknown) => void }) => res.json([]);
 
-router.get('/releases', (req, res) => {
-  if (!productFlags.releases) {
-    featureOff(res, 'releases');
-    return;
-  }
-  empty(req, res);
-});
+router.get('/releases', empty);
 router.post('/releases/:id/rollback', (_req, res) => {
-  if (!productFlags.releases) {
-    featureOff(res, 'releases');
-    return;
-  }
   res.status(501).json({ code: 'not_implemented', message: 'Releases not enabled' });
 });
 
@@ -407,100 +314,32 @@ router.post('/approvals/:id/reject', (_req, res) => {
   res.status(501).json({ code: 'not_implemented', message: 'Approvals not enabled' });
 });
 
-router.get('/clusters', (req, res) => {
-  if (!clustersEnabled()) {
-    featureOff(res, 'kubernetes-cluster deploys');
-    return;
-  }
-  empty(req, res);
-});
+router.get('/clusters', empty);
 router.post('/clusters/:id/scale', (_req, res) => {
-  if (!clustersEnabled()) {
-    featureOff(res, 'kubernetes-cluster deploys');
-    return;
-  }
   res.status(501).json({ code: 'not_implemented', message: 'Clusters not enabled' });
 });
 
-router.get('/monitoring/alerts', (req, res) => {
-  if (!productFlags.monitoring && !productFlags.alerts) {
-    featureOff(res, 'monitoring');
-    return;
-  }
-  empty(req, res);
-});
-router.get('/monitoring/metrics/:infra', (req, res) => {
-  if (!productFlags.monitoring) {
-    featureOff(res, 'monitoring');
-    return;
-  }
-  res.json([]);
-});
+router.get('/monitoring/alerts', empty);
+router.get('/monitoring/metrics/:infra', (_req, res) => res.json([]));
 router.post('/monitoring/alerts', (_req, res) => {
-  if (!productFlags.alerts) {
-    featureOff(res, 'alerts');
-    return;
-  }
   res.status(501).json({ code: 'not_implemented', message: 'Monitoring not enabled' });
 });
 router.post('/monitoring/setup/:infra', (_req, res) => {
-  if (!productFlags.monitoring) {
-    featureOff(res, 'monitoring');
-    return;
-  }
   res.status(501).json({ code: 'not_implemented', message: 'Monitoring not enabled' });
 });
-router.get('/monitoring/dashboards', (req, res) => {
-  if (!productFlags.monitoring) {
-    featureOff(res, 'monitoring');
-    return;
-  }
-  empty(req, res);
-});
+router.get('/monitoring/dashboards', empty);
 router.get('/monitoring/health/:infra', (_req, res) => {
-  if (!productFlags.monitoring) {
-    featureOff(res, 'monitoring');
-    return;
-  }
   res.json({ status: 'unknown' });
 });
 
-router.get('/apm/services', (req, res) => {
-  if (!productFlags.apm) {
-    featureOff(res, 'apm');
-    return;
-  }
-  empty(req, res);
-});
-router.get('/apm/services/:id/operations', (req, res) => {
-  if (!productFlags.apm) {
-    featureOff(res, 'apm');
-    return;
-  }
-  empty(req, res);
-});
-router.get('/apm/services/:serviceId/operations/:opId/traces', (req, res) => {
-  if (!productFlags.apm) {
-    featureOff(res, 'apm');
-    return;
-  }
-  empty(req, res);
-});
+router.get('/apm/services', empty);
+router.get('/apm/services/:id/operations', empty);
+router.get('/apm/services/:serviceId/operations/:opId/traces', empty);
 router.get('/apm/traces/:traceId', (_req, res) => {
-  if (!productFlags.apm) {
-    featureOff(res, 'apm');
-    return;
-  }
   res.status(404).json({ code: 'not_found', message: 'Trace not found' });
 });
 
-router.get('/logs', (req, res) => {
-  if (!productFlags.logging) {
-    featureOff(res, 'logging');
-    return;
-  }
-  empty(req, res);
-});
+router.get('/logs', empty);
 
 router.get('/scaling/schedules', empty);
 router.get('/scaling/policies', empty);
