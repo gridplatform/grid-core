@@ -1,9 +1,5 @@
 import type { CloudProviderType } from '../types/api';
-import {
-  isDeployEnabled,
-  isProductEnabled,
-  normalizeProviderId,
-} from '../config/featureFlags';
+import { normalizeProviderId } from '../config/providers';
 import { COMPUTE_COMPOSER_TYPES, NETWORK_COMPOSER_TYPES } from './terraformResourceCatalog';
 
 export type DeployEngine = 'terraform' | 'kubernetes';
@@ -76,13 +72,12 @@ const TOP_LEVEL_CONFIG_KEYS = new Set([
 /**
  * Map a deploy request onto grid.json.
  *
- * Resource types in NETWORK_COMPOSER_TYPES / COMPUTE_COMPOSER_TYPES expand into
- * the network or VM recipe the CLI composers expect. Everything else becomes a
- * single passthrough resource whose config keys the CLI forwards to the module
- * bank as Terraform variables; the module's variables.tf is the contract.
+ * The API does not feature-flag deploys — the console hides disabled types.
+ * NETWORK_COMPOSER_TYPES / COMPUTE_COMPOSER_TYPES expand into the recipes the
+ * CLI composers expect. Everything else is a passthrough resource (config keys
+ * → Terraform module variables once CLI generic generate is wired).
  */
 export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDeploy {
-  // Kubernetes workloads are not feature-flagged; they are simply not wired to apply.
   if (req.engine === 'kubernetes') {
     throw new DeployMapError('Workloads engine is not connected to apply yet', 501);
   }
@@ -91,22 +86,11 @@ export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDepl
     throw new DeployMapError(`Unknown engine "${req.engine}"`, 400);
   }
 
-  if (!isProductEnabled('deployments')) {
-    throw new DeployMapError('Feature "deployments" is disabled', 403);
-  }
-
   const providerId = normalizeProviderId(req.provider || asString(req.config.provider, 'aws'));
   const type = req.resourceType.trim().toLowerCase();
 
   if (!type) {
     throw new DeployMapError('resourceType is required');
-  }
-
-  if (!isDeployEnabled(providerId, type)) {
-    throw new DeployMapError(
-      `Deploys are disabled for "${providerId}.${type}". Turn it on in src/config/featureFlags.ts (deployFlags.${providerId}).`,
-      403
-    );
   }
 
   if (Array.isArray(req.config.resources) && req.config.resources.length > 0) {

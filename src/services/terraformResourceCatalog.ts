@@ -1,6 +1,6 @@
 /**
- * Families group resource types for display and validation only. Deploy
- * permission is decided per provider x resource type in config/featureFlags.ts.
+ * Families group resource types for display and mapper composers.
+ * Console on/off for deploys lives only in grid-ui featureFlags.ts — not here.
  */
 export type TerraformFamily =
   | 'compute'
