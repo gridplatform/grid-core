@@ -32,6 +32,14 @@ services:
       GRID_AUTH_ADMIN_EMAIL: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local}
       GRID_AUTH_ADMIN_PASSWORD: ${GRID_AUTH_ADMIN_PASSWORD:?set GRID_AUTH_ADMIN_PASSWORD in install/.env}
       GRID_AUTO_APPROVE: ${GRID_AUTO_APPROVE:-true}
+      # Remote state (set in install/.env — create bucket/table first)
+      GRID_TF_BACKEND: ${GRID_TF_BACKEND:-local}
+      GRID_TF_STATE_BUCKET: ${GRID_TF_STATE_BUCKET:-}
+      GRID_TF_LOCK_TABLE: ${GRID_TF_LOCK_TABLE:-}
+      GRID_TF_STATE_REGION: ${GRID_TF_STATE_REGION:-}
+      GRID_TF_AZURE_RESOURCE_GROUP: ${GRID_TF_AZURE_RESOURCE_GROUP:-}
+      GRID_TF_AZURE_STORAGE_ACCOUNT: ${GRID_TF_AZURE_STORAGE_ACCOUNT:-}
+      GRID_TF_AZURE_CONTAINER: ${GRID_TF_AZURE_CONTAINER:-}
     volumes:
       - grid-data:/var/lib/grid/data
       - grid-workspaces:/var/lib/grid/workspaces

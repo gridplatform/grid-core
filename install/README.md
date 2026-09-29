@@ -10,11 +10,14 @@ Scripts and Compose for running Grid on a VM or with Docker. Narrative guides:
 |------|---------|
 | `install.sh` | Ubuntu VM installer (Node + systemd + nginx, or Compose) |
 | `docker-compose.yml` | `core` + `ui` (UI image from public grid-ui) |
-| `.env.example` | Copy to `.env` before `compose up` |
+| `.env.example` | Auth, GitOps, **and remote state (`GRID_TF_*`)** |
 | `systemd/grid-core.service` | API unit |
 | `systemd/grid-ui.service` | Optional static UI via `serve` (nginx preferred) |
 | `nginx-host.conf` | Host nginx: UI static + `/api` → core |
 | `../Dockerfile` | Core image (bundles CLI + Terraform) |
+
+**Before applying infra:** create remote state (S3 / GCS / Azure) and set `GRID_TF_*` —  
+[remote-state.md](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md).
 
 ## Quick — Docker Compose
 
