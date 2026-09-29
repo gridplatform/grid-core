@@ -21,7 +21,7 @@ export type DeploymentStatus =
   | 'failed'
   | 'cancelled';
 export type LifecycleMode = 'plan' | 'apply' | 'destroy';
-export type CloudProviderType = 'AWS' | 'GCP' | 'Azure' | 'On-Prem';
+export type CloudProviderType = string;
 
 export type InfrastructureType =
   | 'single-vm'
@@ -49,6 +49,8 @@ export interface Infrastructure {
   gitBranch?: string;
   /** Path of desired-state file in the GitOps repo */
   gitPath?: string;
+  /** Project slug (from projects/<slug>/…) */
+  project?: string;
   /** SHA of last synced commit for this file */
   gitCommit?: string;
   /** Hash of configJson last synced from Git */
@@ -132,6 +134,46 @@ export interface TopologyProvider {
   healthCounts: { healthy: number; warning: number; critical: number };
 }
 
+export type ReleaseStatus =
+  | 'queued'
+  | 'pending_approval'
+  | 'approved'
+  | 'deploying'
+  | 'success'
+  | 'failed'
+  | 'rolled_back';
+
+export type ReleaseType = 'terraform' | 'kubernetes' | 'custom';
+
+/** How the release converges desired state */
+export type ReleaseMode = 'plan' | 'apply' | 'custom';
+
+export interface Release {
+  id: string;
+  name: string;
+  type: ReleaseType;
+  status: ReleaseStatus;
+  environment: string;
+  /** plan = dry-run, apply = live, custom = grid CLI backdoor */
+  mode: ReleaseMode;
+  infrastructureId?: string;
+  infrastructureName?: string;
+  customCommand?: string;
+  deploymentId?: string;
+  version?: string;
+  gitCommit?: string;
+  gitBranch?: string;
+  logs: string[];
+  message?: string;
+  createdAt: string;
+  deployedAt?: string;
+  completedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rollbackFrom?: string;
+  createdBy: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -146,8 +188,14 @@ export interface Environment {
   name: string;
   slug: string;
   order: number;
+  kind?: 'canonical' | 'ephemeral';
   isProduction: boolean;
   approvalRequired: boolean;
+  baseEnv?: string;
+  ttl?: string;
+  expiresAt?: string;
+  expired?: boolean;
+  unitCount?: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -11,19 +11,81 @@ interface StoreShape {
 
 const STORE_FILE = () => path.join(config.dataDir, 'store.json');
 
-async function readStore(): Promise<StoreShape> {
+/** Serialize all store reads/writes — sync fans out many saves and raced on one tmp path. */
+let storeChain: Promise<unknown> = Promise.resolve();
+
+function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = storeChain.then(fn, fn);
+  storeChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+async function readStoreUnlocked(): Promise<StoreShape> {
   await fs.ensureDir(config.dataDir);
-  if (!(await fs.pathExists(STORE_FILE()))) {
-    const empty: StoreShape = { infrastructures: [], deployments: [] };
-    await fs.writeJSON(STORE_FILE(), empty, { spaces: 2 });
+  const file = STORE_FILE();
+  const empty: StoreShape = { infrastructures: [], deployments: [] };
+
+  if (!(await fs.pathExists(file))) {
+    await fs.writeJSON(file, empty, { spaces: 2 });
     return empty;
   }
-  return fs.readJSON(STORE_FILE());
+
+  try {
+    const raw = await fs.readFile(file, 'utf8');
+    if (!raw.trim()) {
+      await fs.writeJSON(file, empty, { spaces: 2 });
+      return empty;
+    }
+    const parsed = JSON.parse(raw) as Partial<StoreShape>;
+    return {
+      infrastructures: Array.isArray(parsed.infrastructures) ? parsed.infrastructures : [],
+      deployments: Array.isArray(parsed.deployments) ? parsed.deployments : [],
+    };
+  } catch {
+    const bak = `${file}.corrupt.${Date.now()}`;
+    try {
+      await fs.move(file, bak, { overwrite: true });
+    } catch {
+      try {
+        await fs.remove(file);
+      } catch {
+        /* ignore */
+      }
+    }
+    await fs.writeJSON(file, empty, { spaces: 2 });
+    return empty;
+  }
+}
+
+async function writeStoreUnlocked(store: StoreShape): Promise<void> {
+  await fs.ensureDir(config.dataDir);
+  const file = STORE_FILE();
+  const tmp = `${file}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+  await fs.writeJSON(tmp, store, { spaces: 2 });
+  await fs.move(tmp, file, { overwrite: true });
+}
+
+async function readStore(): Promise<StoreShape> {
+  return withStoreLock(() => readStoreUnlocked());
 }
 
 async function writeStore(store: StoreShape): Promise<void> {
-  await fs.ensureDir(config.dataDir);
-  await fs.writeJSON(STORE_FILE(), store, { spaces: 2 });
+  return withStoreLock(() => writeStoreUnlocked(store));
+}
+
+/**
+ * Read-modify-write under the same lock so concurrent sync saves don't clobber each other.
+ */
+async function updateStore(mutator: (store: StoreShape) => void): Promise<StoreShape> {
+  return withStoreLock(async () => {
+    const store = await readStoreUnlocked();
+    mutator(store);
+    await writeStoreUnlocked(store);
+    return store;
+  });
 }
 
 export async function listInfrastructures(): Promise<Infrastructure[]> {
@@ -37,15 +99,100 @@ export async function getInfrastructure(id: string): Promise<Infrastructure | un
 }
 
 export async function saveInfrastructure(infra: Infrastructure): Promise<Infrastructure> {
-  const store = await readStore();
-  const idx = store.infrastructures.findIndex((i) => i.id === infra.id);
-  if (idx >= 0) {
-    store.infrastructures[idx] = infra;
-  } else {
-    store.infrastructures.push(infra);
-  }
-  await writeStore(store);
+  await updateStore((store) => {
+    const idx = store.infrastructures.findIndex((i) => i.id === infra.id);
+    if (idx >= 0) store.infrastructures[idx] = infra;
+    else store.infrastructures.push(infra);
+  });
   return infra;
+}
+
+export async function deleteInfrastructure(id: string): Promise<boolean> {
+  let removed = false;
+  await updateStore((store) => {
+    const before = store.infrastructures.length;
+    store.infrastructures = store.infrastructures.filter((i) => i.id !== id);
+    if (store.infrastructures.length === before) return;
+    store.deployments = store.deployments.filter((d) => d.infrastructureId !== id);
+    removed = true;
+  });
+  return removed;
+}
+
+export async function deleteDeploymentsForInfrastructure(infrastructureId: string): Promise<number> {
+  let removed = 0;
+  await updateStore((store) => {
+    const before = store.deployments.length;
+    store.deployments = store.deployments.filter((d) => d.infrastructureId !== infrastructureId);
+    removed = before - store.deployments.length;
+  });
+  return removed;
+}
+
+/** Drop in-flight runs superseded by a newer plan/apply/destroy. */
+export async function cancelActiveDeploymentsForInfrastructure(
+  infrastructureId: string,
+  exceptId?: string
+): Promise<number> {
+  let removed = 0;
+  await updateStore((store) => {
+    const before = store.deployments.length;
+    store.deployments = store.deployments.filter((d) => {
+      if (d.infrastructureId !== infrastructureId) return true;
+      if (exceptId && d.id === exceptId) return true;
+      if (d.status !== 'pending' && d.status !== 'planning' && d.status !== 'running') return true;
+      return false;
+    });
+    removed = before - store.deployments.length;
+  });
+  return removed;
+}
+
+/**
+ * Drop deployments whose infrastructure no longer exists.
+ * Also drop in-flight runs that are older than a finished run for the same infra.
+ */
+export async function reconcileDeployments(): Promise<{ removed: number; cancelled: number }> {
+  let removed = 0;
+  let cancelled = 0;
+
+  await updateStore((store) => {
+    const byId = new Map(store.infrastructures.map((i) => [i.id, i]));
+    const kept: typeof store.deployments = [];
+    for (const d of store.deployments) {
+      const infra = byId.get(d.infrastructureId);
+      if (!infra) {
+        removed += 1;
+        continue;
+      }
+      kept.push(d);
+    }
+
+    const latestFinished = new Map<string, string>();
+    for (const d of kept) {
+      if (d.status !== 'success' && d.status !== 'failed' && d.status !== 'cancelled') continue;
+      const prev = latestFinished.get(d.infrastructureId);
+      if (!prev || d.startedAt > prev) latestFinished.set(d.infrastructureId, d.startedAt);
+    }
+
+    const pruned: typeof store.deployments = [];
+    for (const d of kept) {
+      const finishedAt = latestFinished.get(d.infrastructureId);
+      if (
+        finishedAt &&
+        d.startedAt < finishedAt &&
+        (d.status === 'pending' || d.status === 'planning' || d.status === 'running')
+      ) {
+        cancelled += 1;
+        continue;
+      }
+      pruned.push(d);
+    }
+
+    store.deployments = pruned;
+  });
+
+  return { removed, cancelled };
 }
 
 export async function createInfrastructure(
@@ -68,6 +215,7 @@ export async function createInfrastructure(
     gitCommit: input.gitCommit,
     gitContentHash: input.gitContentHash,
     lastAppliedHash: input.lastAppliedHash,
+    project: input.project,
     status: input.status || 'pending',
     autoApprove: input.autoApprove ?? true,
     driftDetection: input.driftDetection ?? false,
@@ -88,14 +236,11 @@ export async function getDeployment(id: string): Promise<Deployment | undefined>
 }
 
 export async function saveDeployment(deployment: Deployment): Promise<Deployment> {
-  const store = await readStore();
-  const idx = store.deployments.findIndex((d) => d.id === deployment.id);
-  if (idx >= 0) {
-    store.deployments[idx] = deployment;
-  } else {
-    store.deployments.push(deployment);
-  }
-  await writeStore(store);
+  await updateStore((store) => {
+    const idx = store.deployments.findIndex((d) => d.id === deployment.id);
+    if (idx >= 0) store.deployments[idx] = deployment;
+    else store.deployments.push(deployment);
+  });
   return deployment;
 }
 
@@ -133,14 +278,14 @@ export async function appendDeploymentLog(
   deploymentId: string,
   line: string
 ): Promise<void> {
-  // Serialize appends so concurrent stdout/stderr chunks don't drop lines
   const prev = appendChains.get(deploymentId) ?? Promise.resolve();
   const next = prev
     .then(async () => {
-      const deployment = await getDeployment(deploymentId);
-      if (!deployment) return;
-      deployment.logs.push(line);
-      await saveDeployment(deployment);
+      await updateStore((store) => {
+        const deployment = store.deployments.find((d) => d.id === deploymentId);
+        if (!deployment) return;
+        deployment.logs.push(line);
+      });
     })
     .catch(() => undefined);
   appendChains.set(deploymentId, next);

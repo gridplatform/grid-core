@@ -5,9 +5,16 @@ import { cliChildEnv, config } from '../config';
 import type { Deployment, Infrastructure, LifecycleMode } from '../types/api';
 import {
   appendDeploymentLog,
+  getDeployment,
   saveDeployment,
   saveInfrastructure,
 } from '../store/memoryStore';
+
+/** Skip mutating a deployment that was cancelled (superseded by a newer run). */
+async function stillActive(deployment: Deployment): Promise<boolean> {
+  const latest = await getDeployment(deployment.id);
+  return !!latest && latest.status !== 'cancelled';
+}
 
 async function runCommand(
   command: string,
@@ -144,21 +151,23 @@ function resolveTerraformDirs(infra: Infrastructure): {
   };
 }
 
-function failDeployment(
+async function failDeployment(
   deployment: Deployment,
   infra: Infrastructure,
   message: string
 ): Promise<void> {
+  if (!(await stillActive(deployment))) {
+    await appendDeploymentLog(deployment.id, `${message} (ignored — run already cancelled)`);
+    return;
+  }
   deployment.status = 'failed';
   deployment.progress = 100;
   deployment.completedAt = new Date().toISOString();
   infra.status = 'error';
   infra.updatedAt = new Date().toISOString();
-  return Promise.all([
-    appendDeploymentLog(deployment.id, message),
-    saveDeployment(deployment),
-    saveInfrastructure(infra),
-  ]).then(() => undefined);
+  await appendDeploymentLog(deployment.id, message);
+  await saveDeployment(deployment);
+  await saveInfrastructure(infra);
 }
 
 /**
@@ -181,10 +190,25 @@ export async function runLifecycle(
     await appendDeploymentLog(deployment.id, line);
   };
 
+  const checkpoint = async (mutate: () => void): Promise<boolean> => {
+    if (!(await stillActive(deployment))) {
+      await log('[grid] aborting — this run was cancelled');
+      return false;
+    }
+    mutate();
+    await saveDeployment(deployment);
+    return true;
+  };
+
   deployment.mode = mode;
-  deployment.status = mode === 'plan' ? 'planning' : 'running';
-  deployment.progress = 10;
-  await saveDeployment(deployment);
+  if (
+    !(await checkpoint(() => {
+      deployment.status = mode === 'plan' ? 'planning' : 'running';
+      deployment.progress = 10;
+    }))
+  ) {
+    return;
+  }
 
   await log(
     `[grid] terraformDir=${generatedDir} mode=${mode} archive=${resolved.writeArchive}`
@@ -201,8 +225,13 @@ export async function runLifecycle(
     return;
   }
 
-  deployment.progress = 40;
-  await saveDeployment(deployment);
+  if (
+    !(await checkpoint(() => {
+      deployment.progress = 40;
+    }))
+  ) {
+    return;
+  }
   await log('[terraform] init');
 
   const initCode = await runCommand(
@@ -216,8 +245,13 @@ export async function runLifecycle(
     return;
   }
 
-  deployment.progress = 60;
-  await saveDeployment(deployment);
+  if (
+    !(await checkpoint(() => {
+      deployment.progress = 60;
+    }))
+  ) {
+    return;
+  }
 
   if (mode === 'plan') {
     await log('[terraform] plan');
@@ -264,10 +298,16 @@ export async function runLifecycle(
       }
     }
 
-    deployment.status = 'success';
     deployment.progress = 100;
     deployment.completedAt = new Date().toISOString();
     infra.updatedAt = new Date().toISOString();
+
+    if (!(await stillActive(deployment))) {
+      await log('[grid] plan finished but run was cancelled — not saving');
+      return;
+    }
+
+    deployment.status = 'success';
     await log('[grid] plan succeeded');
     await saveDeployment(deployment);
     await saveInfrastructure(infra);
@@ -283,6 +323,11 @@ export async function runLifecycle(
       log
     );
 
+    if (!(await stillActive(deployment))) {
+      await log('[grid] destroy finished but run was cancelled — not saving');
+      return;
+    }
+
     deployment.progress = 100;
     deployment.completedAt = new Date().toISOString();
     infra.updatedAt = new Date().toISOString();
@@ -291,12 +336,28 @@ export async function runLifecycle(
       deployment.status = 'success';
       infra.status = 'destroyed';
       await log('[grid] destroy succeeded');
-    } else {
-      deployment.status = 'failed';
-      infra.status = 'error';
-      await log('[grid] destroy failed');
+      await saveDeployment(deployment);
+      await saveInfrastructure(infra);
+
+      // If desired-state JSON is gone, drop the store row so it does not linger as a ghost.
+      if (infra.gitPath) {
+        const abs = path.join(config.configRoot, infra.gitPath);
+        if (!(await fs.pathExists(abs))) {
+          const { deleteInfrastructure } = await import('../store/memoryStore');
+          await deleteInfrastructure(infra.id);
+          await log('[grid] removed store entry (no longer in config)');
+        }
+      } else {
+        const { deleteInfrastructure } = await import('../store/memoryStore');
+        await deleteInfrastructure(infra.id);
+        await log('[grid] removed orphan store entry');
+      }
+      return;
     }
 
+    deployment.status = 'failed';
+    infra.status = 'error';
+    await log('[grid] destroy failed');
     await saveDeployment(deployment);
     await saveInfrastructure(infra);
     return;
@@ -315,8 +376,13 @@ export async function runLifecycle(
     return;
   }
 
-  deployment.progress = 75;
-  await saveDeployment(deployment);
+  if (
+    !(await checkpoint(() => {
+      deployment.progress = 75;
+    }))
+  ) {
+    return;
+  }
 
   await log('[terraform] apply (from tfplan)');
   const applyCode = await runCommand(
@@ -325,6 +391,11 @@ export async function runLifecycle(
     generatedDir,
     log
   );
+
+  if (!(await stillActive(deployment))) {
+    await log('[grid] apply finished but run was cancelled — not saving');
+    return;
+  }
 
   deployment.progress = 100;
   deployment.completedAt = new Date().toISOString();

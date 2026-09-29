@@ -16,22 +16,45 @@ export function gitopsCloneDir(): string {
 
 export async function loadGitOpsSettings(): Promise<GitOpsSettings | null> {
   await fs.ensureDir(config.dataDir);
-  if (!(await fs.pathExists(SETTINGS_FILE()))) {
-    if (config.gitops.repoUrl) {
-      const seeded: GitOpsSettings = {
+
+  const fromEnv: GitOpsSettings | null = config.gitops.repoUrl
+    ? {
         repoUrl: config.gitops.repoUrl,
         branch: config.gitops.branch,
         pathPrefix: config.gitops.pathPrefix,
         syncIntervalSec: config.gitops.syncIntervalSec,
         enabled: true,
         updatedAt: new Date().toISOString(),
-      };
-      await saveGitOpsSettings(seeded);
-      return seeded;
+      }
+    : null;
+
+  if (!(await fs.pathExists(SETTINGS_FILE()))) {
+    if (fromEnv) {
+      await saveGitOpsSettings(fromEnv);
+      return fromEnv;
     }
     return null;
   }
-  return fs.readJSON(SETTINGS_FILE());
+
+  const existing = (await fs.readJSON(SETTINGS_FILE())) as GitOpsSettings;
+  // Env wins when set (remote public repos / CI) — keep file fields otherwise.
+  if (fromEnv) {
+    const merged: GitOpsSettings = {
+      ...existing,
+      repoUrl: fromEnv.repoUrl,
+      branch: fromEnv.branch || existing.branch,
+      pathPrefix: fromEnv.pathPrefix ?? existing.pathPrefix,
+      syncIntervalSec:
+        process.env.GRID_GITOPS_SYNC_INTERVAL_SEC !== undefined
+          ? fromEnv.syncIntervalSec
+          : existing.syncIntervalSec,
+      enabled: existing.enabled !== false,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveGitOpsSettings(merged);
+    return merged;
+  }
+  return existing;
 }
 
 export async function saveGitOpsSettings(settings: GitOpsSettings): Promise<GitOpsSettings> {

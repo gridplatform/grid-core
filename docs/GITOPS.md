@@ -64,11 +64,12 @@ If omitted, Grid derives a stable UUID from the file path.
 5. Optional env:
 
 ```bash
-GRID_CONFIG_ROOT=/path/to/desired-state
-GRID_MODULE_BANK=/path/to/grid-terraform
-GRID_GITOPS_REPO_URL=https://github.com/you/grid-desired-state.git
+GRID_CONFIG_ROOT=./data/desired-state
+GRID_MODULE_BANK=https://github.com/gridplatform/grid-terraform.git
+GRID_MODULE_BANK_REF=main
+GRID_GITOPS_REPO_URL=https://github.com/gridplatform/grid-config.git
 GRID_GITOPS_BRANCH=main
-GRID_GITOPS_PATH=           # empty = cloud/env/type at repo root
+GRID_GITOPS_PATH=           # empty = projects/… at repo root
 GRID_GITOPS_SYNC_INTERVAL_SEC=60
 ```
 

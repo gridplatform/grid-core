@@ -37,10 +37,15 @@ function asNumber(value: unknown, fallback: number): number {
 }
 
 function toDisplayProvider(providerId: string): CloudProviderType {
-  if (providerId === 'gcp') return 'GCP';
-  if (providerId === 'azure') return 'Azure';
-  if (providerId === 'aws') return 'AWS';
-  return 'On-Prem';
+  const p = providerId.toLowerCase();
+  if (p === 'gcp') return 'GCP';
+  if (p === 'azure') return 'Azure';
+  if (p === 'aws') return 'AWS';
+  if (p === 'oracle' || p === 'oci') return 'Oracle';
+  if (p === 'alibaba' || p === 'aliyun') return 'Alibaba';
+  if (p === 'on-prem' || p === 'onprem') return 'On-Prem';
+  if (!providerId) return 'AWS';
+  return providerId.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Normalize UI/API env labels to CLI metadata.environment. */
