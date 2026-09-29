@@ -67,6 +67,7 @@ export interface InfrastructureListItem {
   connections: string[];
   cluster?: string;
   config?: Record<string, unknown>;
+  gitPath?: string;
 }
 
 export interface Deployment {
@@ -135,7 +136,7 @@ export type ReleaseStatus =
 export type ReleaseType = 'terraform' | 'kubernetes' | 'custom';
 
 /** How the release converges desired state */
-export type ReleaseMode = 'plan' | 'apply' | 'custom';
+export type ReleaseMode = 'plan' | 'apply' | 'destroy' | 'custom';
 
 export interface Release {
   id: string;
