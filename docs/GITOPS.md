@@ -104,3 +104,15 @@ drift reports include a **state inventory** plus guidance so you can update Git 
 | `POST` | `/api/v1/infrastructures/:id/drift-check` |
 
 See also [LIFECYCLE.md](./LIFECYCLE.md) and [KUBERNETES.md](./KUBERNETES.md) (cluster vs node pool vs workload units).
+
+## Module bank (separate from desired-state)
+
+`GRID_MODULE_BANK` (git URL or local path) is the Terraform module source
+(`grid-terraform`). When it is a git URL, Core clones it once under
+`GRID_DATA_DIR/module-bank` (same idea as desired-state → PVC/VM disk).
+
+- Generate / plan / apply use that **local** checkout only (no Git fetch per run).
+- Refresh with **Sync modules** on the Console GitOps page, or
+  `POST /api/v1/module-bank/sync`, or optional
+  `GRID_MODULE_BANK_SYNC_INTERVAL_SEC`.
+- Desired-state sync (`GRID_GITOPS_*`) stays independent — config JSON vs modules.

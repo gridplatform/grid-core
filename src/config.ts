@@ -66,6 +66,11 @@ export const config = {
     process.env.GRID_MODULE_BANK_REF ||
     process.env.GRID_MODULE_BANK_BRANCH ||
     'main',
+  /**
+   * Optional auto pull for the module-bank checkout (seconds). 0 = manual Sync only.
+   * Generate/plan always use the local checkout — never fetch per request.
+   */
+  moduleBankSyncIntervalSec: Number(process.env.GRID_MODULE_BANK_SYNC_INTERVAL_SEC || 0),
   terraformBin: process.env.GRID_TERRAFORM_BIN || 'terraform',
   /** API applies use -auto-approve unless GRID_AUTO_APPROVE=false */
   autoApprove: process.env.GRID_AUTO_APPROVE !== 'false',
@@ -109,15 +114,30 @@ export const config = {
 
 /** Env injected into every CLI child. Core owns path SoT. */
 export function cliChildEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  // Prefer local module-bank checkout so CLI generate never hits the network.
+  let moduleBankPath = config.moduleBank;
+  try {
+    // Lazy require avoids circular import at module load.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { moduleBankLocalPath } = require('./services/moduleBankService') as {
+      moduleBankLocalPath: () => string;
+    };
+    moduleBankPath = moduleBankLocalPath();
+  } catch {
+    /* keep config.moduleBank */
+  }
+
   return {
     ...process.env,
     GRID_CLI_ROOT: config.cliRoot,
     GRID_CONFIG_ROOT: config.configRoot,
-    GRID_MODULE_BANK: config.moduleBank,
+    GRID_MODULE_BANK: moduleBankPath,
     GRID_MODULE_BANK_REF: config.moduleBankRef,
     GRID_DATA_DIR: config.dataDir,
     GRID_WORK_DIR: config.workDir,
     GRID_TERRAFORM_BIN: config.terraformBin,
+    // CLI must not pull on every generate — Core Sync owns updates.
+    GRID_MODULE_BANK_PULL: '0',
     ...extra,
   };
 }
