@@ -4,10 +4,19 @@ HTTP API for Grid Console — **the heart of the platform**. Accepts deploy
 requests, maps them to Grid JSON, runs the CLI add-on (`generate`) + Terraform,
 and streams status/logs.
 
-**Self-host / VM install:** see [grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install)  
-(scripts and Compose will live in [`install/`](./install/) in this repo).
+**Self-host:** see [`install/`](./install/) and
+[grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install).
 
-## Run
+```bash
+# Docker Compose
+cp install/.env.example install/.env   # set GRID_AUTH_ADMIN_PASSWORD
+docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+
+# Or Ubuntu VM one-liner
+# curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
+```
+
+## Run (development)
 
 ```bash
 cd grid-core

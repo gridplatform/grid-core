@@ -1,0 +1,29 @@
+[Unit]
+Description=Grid Core API
+Documentation=https://github.com/gridplatform/grid-docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=grid
+Group=grid
+WorkingDirectory=/opt/grid/grid-core
+EnvironmentFile=-/etc/grid/grid.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=GRID_CLI_ROOT=/opt/grid/grid-cli
+Environment=GRID_DATA_DIR=/var/lib/grid/data
+Environment=GRID_WORK_DIR=/var/lib/grid/workspaces
+Environment=GRID_CONFIG_ROOT=/var/lib/grid/desired-state
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+# Soft hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

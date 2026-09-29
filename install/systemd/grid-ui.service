@@ -1,0 +1,22 @@
+[Unit]
+Description=Grid Console (UI)
+Documentation=https://github.com/gridplatform/grid-docs
+After=network-online.target grid-core.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=grid
+Group=grid
+WorkingDirectory=/opt/grid/grid-ui
+EnvironmentFile=-/etc/grid/grid.env
+# Static build; proxies API via optional nginx — or open :8080 directly and set VITE at build time
+ExecStart=/usr/bin/npx --yes serve -s dist -l 8080
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
