@@ -7,6 +7,12 @@ import {
   effectiveGitOpsSyncIntervalSec,
   startGitOpsAutoSync,
 } from './services/gitopsAutoSync';
+import {
+  ensureModuleBankPresent,
+  moduleBankIsRemote,
+  moduleBankLocalPath,
+  startModuleBankAutoSync,
+} from './services/moduleBankService';
 import { syncGitOpsRepo } from './services/gitopsSyncService';
 
 async function main() {
@@ -20,12 +26,28 @@ async function main() {
     console.warn('[auth] GRID_AUTH_DISABLED — API is open; demo user is used for audit fields.');
   }
 
+  // Module bank: clone once onto disk/PVC; generate uses this path (no per-request fetch).
+  try {
+    const mb = await ensureModuleBankPresent();
+    console.log(
+      `[module-bank] ready at ${mb.localPath}` +
+        (mb.lastCommit ? ` @ ${mb.lastCommit.slice(0, 8)}` : '') +
+        (mb.remote ? ' (remote checkout)' : ' (local path)')
+    );
+  } catch (err) {
+    console.error(
+      '[module-bank] ensure failed',
+      err instanceof Error ? err.message : err
+    );
+  }
+
   const app = createApp();
   app.listen(config.port, () => {
     console.log(`grid-core listening on http://localhost:${config.port}`);
     console.log(`CLI root:      ${config.cliRoot}`);
     console.log(`Config root:   ${config.configRoot}`);
     console.log(`Module bank:   ${config.moduleBank}`);
+    console.log(`Module bank local: ${moduleBankLocalPath()}`);
     console.log(`Module bank ref: ${config.moduleBankRef}`);
     console.log(`Work dir:      ${config.workDir}`);
     if (config.gitops.repoUrl) {
@@ -39,15 +61,21 @@ async function main() {
     }
   });
 
+  if (moduleBankIsRemote() && config.moduleBankSyncIntervalSec > 0) {
+    startModuleBankAutoSync(config.moduleBankSyncIntervalSec);
+  }
+
   // Ensure desired-state tree exists (clone if empty + remote configured).
   const settings = await loadGitOpsSettings();
   if (settings?.enabled && settings.repoUrl) {
     try {
       const result = await syncGitOpsRepo();
-      console.log(
-        `[gitops] initial sync: ${result.synced} files` +
-          (result.commit ? ` @ ${result.commit.slice(0, 8)}` : '')
-      );
+      if (result) {
+        console.log(
+          `[gitops] initial sync: ${result.synced} files` +
+            (result.commit ? ` @ ${result.commit.slice(0, 8)}` : '')
+        );
+      }
     } catch (err) {
       console.error('[gitops] initial sync failed', err instanceof Error ? err.message : err);
     }

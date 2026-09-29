@@ -11,6 +11,10 @@ import {
 } from '../services/gitopsSyncService';
 import { checkInfrastructureDrift } from '../services/driftService';
 import { getInfrastructure, listInfrastructures } from '../store/memoryStore';
+import {
+  getModuleBankStatus,
+  syncModuleBank,
+} from '../services/moduleBankService';
 import type { GitOpsSettings } from '../types/gitops';
 
 const router = Router();
@@ -97,6 +101,23 @@ router.post('/gitops/infrastructures/:id/drift-check', async (req, res) => {
   } catch (err) {
     res.status(500).json({
       code: 'drift_error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+/** Module bank (grid-terraform) — separate from desired-state GitOps. */
+router.get('/module-bank/status', async (_req, res) => {
+  res.json(await getModuleBankStatus());
+});
+
+router.post('/module-bank/sync', async (_req, res) => {
+  try {
+    const status = await syncModuleBank();
+    res.json(status);
+  } catch (err) {
+    res.status(400).json({
+      code: 'module_bank_sync_error',
       message: err instanceof Error ? err.message : String(err),
     });
   }
