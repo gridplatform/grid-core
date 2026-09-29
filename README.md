@@ -4,6 +4,9 @@ HTTP API for Grid Console — **the heart of the platform**. Accepts deploy
 requests, maps them to Grid JSON, runs the CLI add-on (`generate`) + Terraform,
 and streams status/logs.
 
+**Self-host / VM install:** see [grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install)  
+(scripts and Compose will live in [`install/`](./install/) in this repo).
+
 ## Run
 
 ```bash
