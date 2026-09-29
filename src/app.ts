@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import v1 from './routes/v1';
+import gitops from './routes/gitops';
 
 export function createApp() {
   const app = express();
@@ -17,6 +18,7 @@ export function createApp() {
   });
 
   app.use('/api/v1', v1);
+  app.use('/api/v1', gitops);
 
   app.use(
     (

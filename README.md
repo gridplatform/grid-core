@@ -25,6 +25,13 @@ Listens on `http://localhost:3000` (`PORT`).
 
 ## Deploy path
 
-`POST /api/v1/deployments` with a Grid console body (`name`, `engine`, `provider`, `environment`, `resourceType`, `config`).
+`POST /api/v1/deployments` with `{ name, engine, provider, environment, resourceType, config }`.
 
-Terraform engine on **aws** / **gcp** maps to CLI resources (`vpc` / `subnet` / `vm`) and reuses `runInfrastructureDeploy`. Follow with `GET /api/v1/deployments/:id` and `.../logs`.
+Terraform engine maps the request to `grid.json` (composers for vpc/subnet/vm;
+passthrough for every other type) and runs `grid-cli generate` + Terraform apply
+against the **grid-terraform** module bank. Follow with `GET /api/v1/deployments/:id`
+and `.../logs`.
+
+**Access model:** console feature flags only hide types in the UI and stop the UI
+from sending them. The API and CLI do not read those flags — a correct request or
+`grid.json` still runs if the module bank and credentials are ready.

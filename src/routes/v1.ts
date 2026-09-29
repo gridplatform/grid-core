@@ -11,13 +11,18 @@ import {
   saveDeployment,
   saveInfrastructure,
 } from '../store/memoryStore';
-import { runInfrastructureDeploy } from '../services/deployService';
+import { runLifecycle } from '../services/lifecycleService';
 import { buildTopologyFromInfrastructures } from '../services/topologyService';
 import {
   DeployMapError,
   mapDeployRequestToGridConfig,
 } from '../services/gridConfigMapper';
-import type { CloudProviderType, InfrastructureListItem } from '../types/api';
+import type {
+  CloudProviderType,
+  Infrastructure,
+  InfrastructureListItem,
+  LifecycleMode,
+} from '../types/api';
 
 const router = Router();
 
@@ -30,6 +35,14 @@ const CreateInfraSchema = z.object({
   driftDetection: z.boolean().optional(),
 });
 
+const PatchInfraSchema = z.object({
+  name: z.string().min(1).optional(),
+  environment: z.string().min(1).optional(),
+  configJson: z.record(z.unknown()).optional(),
+  autoApprove: z.boolean().optional(),
+  driftDetection: z.boolean().optional(),
+});
+
 const CreateDeploymentSchema = z.object({
   name: z.string().min(1),
   engine: z.enum(['terraform', 'kubernetes']),
@@ -37,6 +50,8 @@ const CreateDeploymentSchema = z.object({
   environment: z.string().min(1),
   resourceType: z.string().min(1),
   config: z.record(z.unknown()).default({}),
+  infrastructureId: z.string().uuid().optional(),
+  mode: z.enum(['plan', 'apply']).default('apply'),
 });
 
 function toListItem(infra: Awaited<ReturnType<typeof getInfrastructure>>): InfrastructureListItem | null {
@@ -53,6 +68,23 @@ function toListItem(infra: Awaited<ReturnType<typeof getInfrastructure>>): Infra
     connections: [],
     config: infra.configJson,
   };
+}
+
+async function startLifecycle(
+  infra: Infrastructure,
+  mode: LifecycleMode,
+  meta?: { name?: string; engine?: string; resourceType?: string; provider?: string; environment?: string }
+) {
+  const deployment = await createDeployment(infra.id, config.demoUser.email, {
+    name: meta?.name || infra.name,
+    engine: meta?.engine || 'terraform',
+    resourceType: meta?.resourceType,
+    provider: meta?.provider || infra.provider,
+    environment: meta?.environment || infra.environment,
+    mode,
+  });
+  void runLifecycle(infra, deployment, mode);
+  return deployment;
 }
 
 router.get('/health', (_req, res) => {
@@ -115,24 +147,98 @@ router.post('/infrastructures', async (req, res) => {
     autoApprove: body.autoApprove ?? true,
     driftDetection: body.driftDetection ?? false,
   });
+
+  const shouldApply = req.query.apply === 'true' || req.query.apply === '1';
+  const shouldPlan = req.query.plan === 'true' || req.query.plan === '1';
+
+  if (shouldApply || shouldPlan) {
+    const deployment = await startLifecycle(infra, shouldApply ? 'apply' : 'plan');
+    res.status(201).json({ infrastructure: infra, deployment });
+    return;
+  }
+
   res.status(201).json(infra);
 });
 
+router.patch('/infrastructures/:id', async (req, res) => {
+  const infra = await getInfrastructure(req.params.id);
+  if (!infra) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  if (infra.status === 'destroyed') {
+    res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed; create a new one' });
+    return;
+  }
+
+  const parsed = PatchInfraSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ code: 'validation_error', message: parsed.error.message });
+    return;
+  }
+
+  const body = parsed.data;
+  if (body.name !== undefined) infra.name = body.name;
+  if (body.environment !== undefined) infra.environment = body.environment;
+  if (body.configJson !== undefined) infra.configJson = body.configJson;
+  if (body.autoApprove !== undefined) infra.autoApprove = body.autoApprove;
+  if (body.driftDetection !== undefined) infra.driftDetection = body.driftDetection;
+  infra.updatedAt = new Date().toISOString();
+  await saveInfrastructure(infra);
+  res.json(infra);
+});
+
+router.post('/infrastructures/:id/plan', async (req, res) => {
+  const infra = await getInfrastructure(req.params.id);
+  if (!infra) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  if (infra.status === 'destroyed') {
+    res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
+    return;
+  }
+  const deployment = await startLifecycle(infra, 'plan');
+  res.status(202).json(deployment);
+});
+
+router.post('/infrastructures/:id/apply', async (req, res) => {
+  const infra = await getInfrastructure(req.params.id);
+  if (!infra) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  if (infra.status === 'destroyed') {
+    res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
+    return;
+  }
+  const deployment = await startLifecycle(infra, 'apply');
+  res.status(202).json(deployment);
+});
+
+router.post('/infrastructures/:id/destroy', async (req, res) => {
+  const infra = await getInfrastructure(req.params.id);
+  if (!infra) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  if (infra.status === 'destroyed') {
+    res.status(409).json({ code: 'destroyed', message: 'Already destroyed' });
+    return;
+  }
+  const deployment = await startLifecycle(infra, 'destroy');
+  res.status(202).json(deployment);
+});
+
+/** Legacy alias → apply */
 router.post('/infrastructures/:id/deploy', async (req, res) => {
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-
-  const deployment = await createDeployment(infra.id, config.demoUser.email, {
-    name: infra.name,
-    engine: 'terraform',
-    environment: infra.environment,
-    provider: infra.provider,
-  });
+  const deployment = await startLifecycle(infra, 'apply');
   res.status(202).json(deployment);
-  void runInfrastructureDeploy(infra, deployment);
 });
 
 router.post('/infrastructures/:id/drift-check', async (req, res) => {
@@ -141,7 +247,16 @@ router.post('/infrastructures/:id/drift-check', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  res.json({ hasDrift: false, changes: [] });
+  try {
+    const { checkInfrastructureDrift } = await import('../services/driftService');
+    const report = await checkInfrastructureDrift(infra);
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({
+      code: 'drift_error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 });
 
 router.post('/infrastructures/:id/clone', async (req, res) => {
@@ -158,17 +273,19 @@ router.post('/infrastructures/:id/clone', async (req, res) => {
   res.status(201).json(clone);
 });
 
+/** DELETE runs real terraform destroy */
 router.delete('/infrastructures/:id', async (req, res) => {
-  const items = await listInfrastructures();
-  const target = items.find((i) => i.id === req.params.id);
-  if (!target) {
+  const infra = await getInfrastructure(req.params.id);
+  if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  target.status = 'stopped';
-  target.updatedAt = new Date().toISOString();
-  await saveInfrastructure(target);
-  res.status(204).end();
+  if (infra.status === 'destroyed') {
+    res.status(204).end();
+    return;
+  }
+  const deployment = await startLifecycle(infra, 'destroy');
+  res.status(202).json(deployment);
 });
 
 router.get('/deployments', async (_req, res) => {
@@ -182,9 +299,18 @@ router.post('/deployments', async (req, res) => {
     return;
   }
 
+  const body = parsed.data;
+  if (body.engine === 'kubernetes') {
+    res.status(501).json({
+      code: 'not_implemented',
+      message: 'Kubernetes workloads are not applied yet. Use engine=terraform for infrastructure.',
+    });
+    return;
+  }
+
   let mapped;
   try {
-    mapped = mapDeployRequestToGridConfig(parsed.data);
+    mapped = mapDeployRequestToGridConfig(body);
   } catch (err) {
     if (err instanceof DeployMapError) {
       res.status(err.statusCode).json({ code: 'deploy_map_error', message: err.message });
@@ -193,18 +319,37 @@ router.post('/deployments', async (req, res) => {
     throw err;
   }
 
-  const body = parsed.data;
-  const infra = await createInfrastructure({
-    name: body.name,
-    environment: body.environment,
-    provider: mapped.displayProvider,
-    configJson: mapped.gridConfig,
-    status: 'pending',
-    autoApprove: true,
-    driftDetection: false,
-  });
+  let infra: Infrastructure;
+  if (body.infrastructureId) {
+    const existing = await getInfrastructure(body.infrastructureId);
+    if (!existing) {
+      res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+      return;
+    }
+    if (existing.status === 'destroyed') {
+      res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
+      return;
+    }
+    existing.name = body.name;
+    existing.environment = body.environment;
+    existing.configJson = mapped.gridConfig;
+    existing.provider = mapped.displayProvider;
+    existing.updatedAt = new Date().toISOString();
+    infra = await saveInfrastructure(existing);
+  } else {
+    infra = await createInfrastructure({
+      name: body.name,
+      environment: body.environment,
+      provider: mapped.displayProvider,
+      configJson: mapped.gridConfig,
+      status: 'pending',
+      autoApprove: true,
+      driftDetection: false,
+    });
+  }
 
-  const deployment = await createDeployment(infra.id, config.demoUser.email, {
+  const mode: LifecycleMode = body.mode;
+  const deployment = await startLifecycle(infra, mode, {
     name: body.name,
     engine: body.engine,
     resourceType: body.resourceType,
@@ -213,7 +358,6 @@ router.post('/deployments', async (req, res) => {
   });
 
   res.status(202).json(deployment);
-  void runInfrastructureDeploy(infra, deployment);
 });
 
 router.get('/deployments/:id', async (req, res) => {
@@ -231,7 +375,103 @@ router.get('/deployments/:id/logs', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
     return;
   }
-  res.json({ deploymentId: d.id, logs: d.logs });
+  res.json({
+    deploymentId: d.id,
+    logs: d.logs,
+    planSummary: d.planSummary,
+    status: d.status,
+    progress: d.progress,
+    mode: d.mode,
+  });
+});
+
+/**
+ * Live CLI/terraform logs via Server-Sent Events.
+ * Streams new log lines as lifecycleService appends them.
+ */
+router.get('/deployments/:id/logs/stream', async (req, res) => {
+  const initial = await getDeployment(req.params.id);
+  if (!initial) {
+    res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  let cursor = 0;
+  let closed = false;
+
+  const writeEvent = (event: string, data: unknown) => {
+    if (closed) return;
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  writeEvent('snapshot', {
+    deploymentId: initial.id,
+    logs: initial.logs,
+    status: initial.status,
+    progress: initial.progress,
+    mode: initial.mode,
+    planSummary: initial.planSummary,
+  });
+  cursor = initial.logs.length;
+
+  const tick = async () => {
+    if (closed) return;
+    const d = await getDeployment(req.params.id);
+    if (!d) {
+      writeEvent('error', { message: 'Deployment not found' });
+      cleanup();
+      return;
+    }
+
+    if (d.logs.length > cursor) {
+      const lines = d.logs.slice(cursor);
+      cursor = d.logs.length;
+      writeEvent('log', {
+        lines,
+        status: d.status,
+        progress: d.progress,
+        mode: d.mode,
+      });
+    } else {
+      // heartbeat keeps proxies from closing idle streams
+      writeEvent('ping', { status: d.status, progress: d.progress });
+    }
+
+    const terminal = d.status === 'success' || d.status === 'failed' || d.status === 'cancelled';
+    if (terminal) {
+      writeEvent('done', {
+        status: d.status,
+        progress: d.progress,
+        planSummary: d.planSummary,
+        logs: d.logs,
+      });
+      cleanup();
+    }
+  };
+
+  const interval = setInterval(() => {
+    void tick();
+  }, 400);
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(interval);
+    try {
+      res.end();
+    } catch {
+      // ignore
+    }
+  };
+
+  req.on('close', cleanup);
+  void tick();
 });
 
 router.post('/deployments/:id/cancel', async (req, res) => {
@@ -240,7 +480,7 @@ router.post('/deployments/:id/cancel', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Deployment not found' });
     return;
   }
-  if (d.status === 'running' || d.status === 'pending') {
+  if (d.status === 'running' || d.status === 'pending' || d.status === 'planning') {
     d.status = 'cancelled';
     d.completedAt = new Date().toISOString();
     await saveDeployment(d);
@@ -259,7 +499,8 @@ router.post('/deployments/:id/retry', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  const next = await createDeployment(infra.id, config.demoUser.email, {
+  const mode: LifecycleMode = d.mode === 'plan' || d.mode === 'destroy' ? d.mode : 'apply';
+  const next = await startLifecycle(infra, mode, {
     name: d.name || infra.name,
     engine: d.engine || 'terraform',
     resourceType: d.resourceType,
@@ -267,7 +508,6 @@ router.post('/deployments/:id/retry', async (req, res) => {
     environment: d.environment || infra.environment,
   });
   res.status(202).json(next);
-  void runInfrastructureDeploy(infra, next);
 });
 
 router.get('/topology/providers', async (_req, res) => {
@@ -348,12 +588,42 @@ router.get('/environments', (_req, res) => {
   const now = new Date().toISOString();
   res.json([
     {
-      id: 'env-dev',
+      id: 'env-development',
       name: 'Development',
-      slug: 'dev',
+      slug: 'development',
       order: 1,
       isProduction: false,
       approvalRequired: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'env-sandbox',
+      name: 'Sandbox',
+      slug: 'sandbox',
+      order: 2,
+      isProduction: false,
+      approvalRequired: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'env-staging',
+      name: 'Staging',
+      slug: 'staging',
+      order: 3,
+      isProduction: false,
+      approvalRequired: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'env-production',
+      name: 'Production',
+      slug: 'production',
+      order: 4,
+      isProduction: true,
+      approvalRequired: true,
       createdAt: now,
       updatedAt: now,
     },

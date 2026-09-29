@@ -1,6 +1,8 @@
 import fs from 'fs-extra';
 import { createApp } from './app';
 import { config } from './config';
+import { loadGitOpsSettings } from './store/gitopsStore';
+import { syncGitOpsRepo } from './services/gitopsSyncService';
 
 async function main() {
   await fs.ensureDir(config.dataDir);
@@ -12,6 +14,18 @@ async function main() {
     console.log(`CLI root: ${config.cliRoot}`);
     console.log(`Work dir: ${config.workDir}`);
   });
+
+  // Optional background GitOps sync
+  const settings = await loadGitOpsSettings();
+  if (settings?.enabled && settings.syncIntervalSec > 0 && settings.repoUrl) {
+    const ms = settings.syncIntervalSec * 1000;
+    console.log(`GitOps auto-sync every ${settings.syncIntervalSec}s`);
+    setInterval(() => {
+      void syncGitOpsRepo().catch((err) =>
+        console.error('[gitops] sync failed', err instanceof Error ? err.message : err)
+      );
+    }, ms);
+  }
 }
 
 main().catch((err) => {
