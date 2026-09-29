@@ -11,8 +11,10 @@ async function main() {
   const app = createApp();
   app.listen(config.port, () => {
     console.log(`grid-core listening on http://localhost:${config.port}`);
-    console.log(`CLI root: ${config.cliRoot}`);
-    console.log(`Work dir: ${config.workDir}`);
+    console.log(`CLI root:      ${config.cliRoot}`);
+    console.log(`Config root:   ${config.configRoot}`);
+    console.log(`Module bank:   ${config.moduleBank}`);
+    console.log(`Work dir:      ${config.workDir}`);
   });
 
   // Optional background GitOps sync

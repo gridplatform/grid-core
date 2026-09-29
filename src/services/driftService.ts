@@ -1,7 +1,7 @@
 import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
-import { config } from '../config';
+import { cliChildEnv, config } from '../config';
 import type { Infrastructure } from '../types/api';
 import type { DriftReport } from '../types/gitops';
 import { hashContent } from './gitopsHash';
@@ -13,7 +13,7 @@ function runCapture(
   cwd: string
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: process.env });
+    const child = spawn(command, args, { cwd, env: cliChildEnv() });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c) => {
