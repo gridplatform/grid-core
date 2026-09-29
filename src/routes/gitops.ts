@@ -16,6 +16,8 @@ import {
   syncModuleBank,
 } from '../services/moduleBankService';
 import type { GitOpsSettings } from '../types/gitops';
+import { getActorEmail, getActorRole } from '../middleware/requireAuth';
+import { recordAudit } from '../services/auditStore';
 
 const router = Router();
 
@@ -67,14 +69,50 @@ router.put('/gitops/settings', async (req, res) => {
     updatedAt: new Date().toISOString(),
   };
   await saveGitOpsSettings(settings);
+  await recordAudit({
+    action: 'gitops.settings.update',
+    actor: getActorEmail(req),
+    actorRole: getActorRole(req),
+    summary: `Updated GitOps settings (${settings.repoUrl} @ ${settings.branch})`,
+    resourceType: 'gitops',
+    details: {
+      branch: settings.branch,
+      pathPrefix: settings.pathPrefix,
+      syncIntervalSec: settings.syncIntervalSec,
+      enabled: settings.enabled,
+    },
+  });
   res.json(settings);
 });
 
-router.post('/gitops/sync', async (_req, res) => {
+router.post('/gitops/sync', async (req, res) => {
   try {
     const result = await syncGitOpsRepo({ ifBusy: 'fail' });
+    if (!result) {
+      res.status(409).json({
+        code: 'gitops_sync_in_progress',
+        message: 'GitOps sync is already in progress',
+      });
+      return;
+    }
+    await recordAudit({
+      action: 'gitops.sync',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `Synced desired-state (${result.synced} files)`,
+      resourceType: 'gitops',
+      details: result as unknown as Record<string, unknown>,
+    });
     res.json(result);
   } catch (err) {
+    await recordAudit({
+      action: 'gitops.sync',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `GitOps sync failed: ${err instanceof Error ? err.message : String(err)}`,
+      resourceType: 'gitops',
+      outcome: 'failure',
+    });
     if (err instanceof GitOpsSyncInProgressError) {
       res.status(409).json({
         code: 'gitops_sync_in_progress',
@@ -97,6 +135,16 @@ router.post('/gitops/infrastructures/:id/drift-check', async (req, res) => {
   }
   try {
     const report = await checkInfrastructureDrift(infra);
+    await recordAudit({
+      action: 'infra.drift_check',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `Drift check: ${infra.name} — ${report.summary}`,
+      resourceType: 'infrastructure',
+      resourceId: infra.id,
+      resourceName: infra.name,
+      details: { hasDrift: report.hasDrift, kind: report.kind },
+    });
     res.json(report);
   } catch (err) {
     res.status(500).json({
@@ -111,11 +159,27 @@ router.get('/module-bank/status', async (_req, res) => {
   res.json(await getModuleBankStatus());
 });
 
-router.post('/module-bank/sync', async (_req, res) => {
+router.post('/module-bank/sync', async (req, res) => {
   try {
     const status = await syncModuleBank();
+    await recordAudit({
+      action: 'module_bank.sync',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: 'Synced module bank (grid-terraform)',
+      resourceType: 'module_bank',
+      details: status as unknown as Record<string, unknown>,
+    });
     res.json(status);
   } catch (err) {
+    await recordAudit({
+      action: 'module_bank.sync',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `Module bank sync failed: ${err instanceof Error ? err.message : String(err)}`,
+      resourceType: 'module_bank',
+      outcome: 'failure',
+    });
     res.status(400).json({
       code: 'module_bank_sync_error',
       message: err instanceof Error ? err.message : String(err),

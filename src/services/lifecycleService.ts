@@ -9,6 +9,7 @@ import {
   saveDeployment,
   saveInfrastructure,
 } from '../store/memoryStore';
+import { killTrackedProcesses, trackChildProcess } from './processRegistry';
 
 /** Skip mutating a deployment that was cancelled (superseded by a newer run). */
 async function stillActive(deployment: Deployment): Promise<boolean> {
@@ -20,7 +21,8 @@ async function runCommand(
   command: string,
   args: string[],
   cwd: string,
-  onLine: (line: string) => Promise<void>
+  onLine: (line: string) => Promise<void>,
+  trackKey?: string
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -28,6 +30,7 @@ async function runCommand(
       env: cliChildEnv(),
       shell: false,
     });
+    if (trackKey) trackChildProcess(trackKey, child);
 
     const handle = async (chunk: Buffer) => {
       const text = chunk.toString('utf8');
@@ -53,7 +56,8 @@ async function captureCommand(
   command: string,
   args: string[],
   cwd: string,
-  onLine: (line: string) => Promise<void>
+  onLine: (line: string) => Promise<void>,
+  trackKey?: string
 ): Promise<{ code: number; stdout: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -61,6 +65,7 @@ async function captureCommand(
       env: cliChildEnv(),
       shell: false,
     });
+    if (trackKey) trackChildProcess(trackKey, child);
     let stdout = '';
 
     const handleOut = async (chunk: Buffer) => {
@@ -96,7 +101,7 @@ async function generateTerraform(
   configPath: string,
   generatedDir: string,
   log: (line: string) => Promise<void>,
-  opts?: { configDir?: string; writeArchive?: boolean }
+  opts?: { configDir?: string; writeArchive?: boolean; trackKey?: string }
 ): Promise<number> {
   const cliEntryJs = path.join(config.cliRoot, 'dist', 'index.js');
   const cliEntryTs = path.join(config.cliRoot, 'src', 'index.ts');
@@ -112,14 +117,21 @@ async function generateTerraform(
   }
 
   if (useCompiled) {
-    return runCommand(process.execPath, [cliEntryJs, ...args], config.cliRoot, log);
+    return runCommand(
+      process.execPath,
+      [cliEntryJs, ...args],
+      config.cliRoot,
+      log,
+      opts?.trackKey
+    );
   }
 
   return runCommand(
     path.join(config.cliRoot, 'node_modules', '.bin', 'tsx'),
     [cliEntryTs, ...args],
     config.cliRoot,
-    log
+    log,
+    opts?.trackKey
   );
 }
 
@@ -214,11 +226,14 @@ export async function runLifecycle(
     `[grid] terraformDir=${generatedDir} mode=${mode} archive=${resolved.writeArchive}`
   );
 
+  const trackKey = deployment.id;
+
   // Regenerate instance TF from current JSON before plan/apply/destroy.
   await log('[grid] regenerating instance Terraform from JSON (module bank unchanged)...');
   const genCode = await generateTerraform(resolved.configPath, generatedDir, log, {
     configDir: resolved.configDir,
     writeArchive: resolved.writeArchive,
+    trackKey,
   });
   if (genCode !== 0) {
     await failDeployment(deployment, infra, '[grid] generate failed');
@@ -238,7 +253,8 @@ export async function runLifecycle(
     config.terraformBin,
     ['init', '-input=false'],
     generatedDir,
-    log
+    log,
+    trackKey
   );
   if (initCode !== 0) {
     await failDeployment(deployment, infra, '[terraform] init failed');
@@ -259,7 +275,8 @@ export async function runLifecycle(
       config.terraformBin,
       ['plan', '-input=false', '-no-color', '-out=tfplan'],
       generatedDir,
-      log
+      log,
+      trackKey
     );
 
     if (planResult.code !== 0) {
@@ -274,7 +291,8 @@ export async function runLifecycle(
       config.terraformBin,
       ['show', '-json', 'tfplan'],
       generatedDir,
-      async () => undefined
+      async () => undefined,
+      trackKey
     );
     if (show.code === 0 && show.stdout.trim()) {
       try {
@@ -320,7 +338,8 @@ export async function runLifecycle(
       config.terraformBin,
       ['destroy', '-input=false', '-no-color', '-auto-approve'],
       generatedDir,
-      log
+      log,
+      trackKey
     );
 
     if (!(await stillActive(deployment))) {
@@ -369,7 +388,8 @@ export async function runLifecycle(
     config.terraformBin,
     ['plan', '-input=false', '-no-color', '-out=tfplan'],
     generatedDir,
-    log
+    log,
+    trackKey
   );
   if (planCode !== 0) {
     await failDeployment(deployment, infra, '[terraform] plan failed');
@@ -389,7 +409,8 @@ export async function runLifecycle(
     config.terraformBin,
     ['apply', '-input=false', '-no-color', 'tfplan'],
     generatedDir,
-    log
+    log,
+    trackKey
   );
 
   if (!(await stillActive(deployment))) {
@@ -415,6 +436,88 @@ export async function runLifecycle(
 
   await saveDeployment(deployment);
   await saveInfrastructure(infra);
+}
+
+/** Mark deployment cancelled and SIGTERM any tracked terraform/CLI children. */
+export function abortDeploymentProcesses(deploymentId: string): number {
+  return killTrackedProcesses(deploymentId);
+}
+
+/**
+ * Fail-safe cleanup after killing an apply/destroy mid-flight:
+ * run terraform destroy if local state has resources, then remove local state files.
+ * Never deletes state without attempting destroy first (avoids orphaned cloud resources).
+ */
+export async function cleanupPartialTerraform(
+  infra: Infrastructure,
+  log: (line: string) => Promise<void>
+): Promise<{ cleaned: boolean; message: string }> {
+  const resolved = resolveTerraformDirs(infra);
+  const dir = resolved.terraformDir;
+  if (!(await fs.pathExists(dir))) {
+    return { cleaned: false, message: 'No terraform workspace on disk' };
+  }
+
+  const statePath = path.join(dir, 'terraform.tfstate');
+  const hasLocalState = await fs.pathExists(statePath);
+  const hasBackend = await fs.pathExists(path.join(dir, '.terraform'));
+
+  if (!hasLocalState && !hasBackend) {
+    await log('[grid] cleanup: no terraform state found — nothing to destroy');
+    return { cleaned: true, message: 'No state present' };
+  }
+
+  const cleanupKey = `cleanup:${infra.id}:${Date.now()}`;
+  try {
+    await log('[grid] cleanup: terraform init (before destroy)');
+    const initCode = await runCommand(
+      config.terraformBin,
+      ['init', '-input=false', '-no-color'],
+      dir,
+      log,
+      cleanupKey
+    );
+    if (initCode !== 0) {
+      await log('[grid] cleanup: init failed — leaving state intact for manual recovery');
+      return { cleaned: false, message: 'terraform init failed during cleanup' };
+    }
+
+    await log('[grid] cleanup: terraform destroy -auto-approve (roll back partial apply)');
+    const destroyCode = await runCommand(
+      config.terraformBin,
+      ['destroy', '-input=false', '-no-color', '-auto-approve'],
+      dir,
+      log,
+      cleanupKey
+    );
+
+    if (destroyCode !== 0) {
+      await log(
+        '[grid] cleanup: destroy failed — state kept so you can retry destroy manually'
+      );
+      return { cleaned: false, message: 'terraform destroy failed during cleanup' };
+    }
+
+    // Safe to clear local state artifacts after successful destroy.
+    for (const name of [
+      'terraform.tfstate',
+      'terraform.tfstate.backup',
+      'tfplan',
+      '.terraform.lock.hcl',
+    ]) {
+      await fs.remove(path.join(dir, name)).catch(() => undefined);
+    }
+    await fs.remove(path.join(dir, '.terraform')).catch(() => undefined);
+    await log('[grid] cleanup: destroy succeeded; local state artifacts removed');
+
+    infra.status = 'pending';
+    infra.updatedAt = new Date().toISOString();
+    await saveInfrastructure(infra);
+
+    return { cleaned: true, message: 'Destroyed cloud resources and cleared local state' };
+  } finally {
+    killTrackedProcesses(cleanupKey);
+  }
 }
 
 /** @deprecated Use runLifecycle(..., 'apply') */

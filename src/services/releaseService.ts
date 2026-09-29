@@ -10,8 +10,18 @@ import {
   getRelease,
   saveRelease,
 } from './releaseStore';
-import { createDeployment, getInfrastructure } from '../store/memoryStore';
-import { runLifecycle } from './lifecycleService';
+import {
+  createDeployment,
+  getDeployment,
+  getInfrastructure,
+  saveDeployment,
+} from '../store/memoryStore';
+import {
+  abortDeploymentProcesses,
+  cleanupPartialTerraform,
+  runLifecycle,
+} from './lifecycleService';
+import { killTrackedProcesses, releaseRunKey, trackChildProcess } from './processRegistry';
 
 const ALLOWED_GRID_SUBCOMMANDS = new Set([
   'status',
@@ -54,12 +64,18 @@ export function parseGridCliCommand(raw: string): string[] {
   return args;
 }
 
-async function runGridCli(args: string[], onLine: (line: string) => Promise<void>): Promise<number> {
+async function runGridCli(
+  args: string[],
+  onLine: (line: string) => Promise<void>,
+  trackKey?: string
+): Promise<number> {
   const cliEntryJs = path.join(config.cliRoot, 'dist', 'index.js');
   const cliEntryTs = path.join(config.cliRoot, 'src', 'index.ts');
   const useCompiled = await fs.pathExists(cliEntryJs);
 
-  const command = useCompiled ? process.execPath : path.join(config.cliRoot, 'node_modules', '.bin', 'tsx');
+  const command = useCompiled
+    ? process.execPath
+    : path.join(config.cliRoot, 'node_modules', '.bin', 'tsx');
   const fullArgs = useCompiled ? [cliEntryJs, ...args] : [cliEntryTs, ...args];
 
   return new Promise((resolve, reject) => {
@@ -68,6 +84,7 @@ async function runGridCli(args: string[], onLine: (line: string) => Promise<void
       env: cliChildEnv(),
       shell: false,
     });
+    if (trackKey) trackChildProcess(trackKey, child);
     const handle = async (chunk: Buffer) => {
       for (const line of chunk.toString('utf8').split(/\r?\n/)) {
         if (line.trim()) await onLine(line);
@@ -81,21 +98,45 @@ async function runGridCli(args: string[], onLine: (line: string) => Promise<void
 }
 
 async function finishRelease(release: Release, ok: boolean, message: string): Promise<void> {
+  const current = await getRelease(release.id);
+  if (current?.status === 'cancelled') {
+    void processReleaseQueue();
+    return;
+  }
   release.status = ok ? 'success' : 'failed';
   release.message = message;
   release.completedAt = new Date().toISOString();
   if (ok) release.deployedAt = release.completedAt;
   await saveRelease(release);
   await appendReleaseLog(release.id, `[grid] ${message}`);
-  // Kick the queue
+  try {
+    const { recordAudit } = await import('./auditStore');
+    await recordAudit({
+      action: 'release.finish',
+      actor: release.createdBy,
+      resourceType: 'release',
+      resourceId: release.id,
+      resourceName: release.name,
+      summary: `${release.mode} release ${ok ? 'succeeded' : 'failed'}: ${release.name}`,
+      details: {
+        mode: release.mode,
+        environment: release.environment,
+        infrastructureId: release.infrastructureId,
+        message,
+      },
+      outcome: ok ? 'success' : 'failure',
+    });
+  } catch {
+    /* audit must never block release completion */
+  }
   void processReleaseQueue();
 }
 
 async function executeRelease(releaseId: string): Promise<void> {
   const release = await getRelease(releaseId);
   if (!release) return;
+  if (release.status === 'cancelled') return;
 
-  // Status may already be deploying (set by processReleaseQueue).
   if (release.status !== 'deploying') {
     release.status = 'deploying';
     release.deployedAt = new Date().toISOString();
@@ -107,8 +148,13 @@ async function executeRelease(releaseId: string): Promise<void> {
     if (release.mode === 'custom') {
       const args = parseGridCliCommand(release.customCommand || '');
       await appendReleaseLog(release.id, `[grid] $ grid ${args.join(' ')}`);
-      const code = await runGridCli(args, (line) => appendReleaseLog(release.id, line));
+      const code = await runGridCli(
+        args,
+        (line) => appendReleaseLog(release.id, line),
+        releaseRunKey(release.id)
+      );
       const latest = (await getRelease(release.id))!;
+      if (latest.status === 'cancelled') return;
       await finishRelease(
         latest,
         code === 0,
@@ -154,8 +200,9 @@ async function executeRelease(releaseId: string): Promise<void> {
     await runLifecycle(infra, deployment, mode);
 
     const latest = (await getRelease(release.id))!;
-    const { getDeployment } = await import('../store/memoryStore');
+    if (latest.status === 'cancelled') return;
     const depDone = (await getDeployment(deployment.id)) || deployment;
+    if (depDone.status === 'cancelled') return;
     const ok = depDone.status === 'success';
     await finishRelease(
       latest,
@@ -164,6 +211,7 @@ async function executeRelease(releaseId: string): Promise<void> {
     );
   } catch (err) {
     const latest = (await getRelease(release.id)) || release;
+    if (latest.status === 'cancelled') return;
     await finishRelease(latest, false, err instanceof Error ? err.message : String(err));
   }
 }
@@ -177,7 +225,6 @@ export async function processReleaseQueue(): Promise<void> {
     if (active) return;
     const next = await findNextQueued();
     if (!next) return;
-    // Mark deploying atomically before starting work so concurrent callers skip.
     next.status = 'deploying';
     next.deployedAt = new Date().toISOString();
     next.message = undefined;
@@ -240,5 +287,135 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
   }
 
   void processReleaseQueue();
-  return (await getRelease(release.id))!;
+  const saved = (await getRelease(release.id))!;
+  try {
+    const { recordAudit } = await import('./auditStore');
+    await recordAudit({
+      action: 'release.create',
+      actor: input.createdBy,
+      resourceType: 'release',
+      resourceId: saved.id,
+      resourceName: saved.name,
+      summary: `Created ${saved.mode} release: ${saved.name}`,
+      details: {
+        mode: saved.mode,
+        environment: saved.environment,
+        infrastructureId: saved.infrastructureId,
+        status: saved.status,
+      },
+    });
+  } catch {
+    /* ignore */
+  }
+  return saved;
+}
+
+/**
+ * Admin: cancel a queued release, or kill a deploying one.
+ * For apply/destroy mid-flight, attempts terraform destroy cleanup before clearing local state.
+ */
+export async function cancelRelease(releaseId: string, actor: string): Promise<Release> {
+  const release = await getRelease(releaseId);
+  if (!release) throw new Error('Release not found');
+
+  if (
+    release.status === 'success' ||
+    release.status === 'failed' ||
+    release.status === 'cancelled' ||
+    release.status === 'rolled_back'
+  ) {
+    throw new Error(`Release is already ${release.status}`);
+  }
+
+  if (
+    release.status === 'queued' ||
+    release.status === 'pending_approval' ||
+    release.status === 'approved'
+  ) {
+    release.status = 'cancelled';
+    release.message = `Cancelled by ${actor} (was ${release.status})`;
+    release.completedAt = new Date().toISOString();
+    await saveRelease(release);
+    await appendReleaseLog(release.id, `[grid] cancelled by ${actor}`);
+    await auditCancel(release, actor, 'queued');
+    void processReleaseQueue();
+    return (await getRelease(release.id))!;
+  }
+
+  await appendReleaseLog(release.id, `[grid] kill requested by ${actor}`);
+
+  if (release.deploymentId) {
+    const dep = await getDeployment(release.deploymentId);
+    if (dep && (dep.status === 'pending' || dep.status === 'planning' || dep.status === 'running')) {
+      dep.status = 'cancelled';
+      dep.completedAt = new Date().toISOString();
+      await saveDeployment(dep);
+      await appendReleaseLog(release.id, `[grid] cancelled linked deployment ${dep.id}`);
+    }
+    const killed = abortDeploymentProcesses(release.deploymentId);
+    await appendReleaseLog(release.id, `[grid] signalled ${killed} terraform/CLI process(es)`);
+  }
+
+  const customKilled = killTrackedProcesses(releaseRunKey(release.id));
+  if (customKilled > 0) {
+    await appendReleaseLog(release.id, `[grid] signalled ${customKilled} custom CLI process(es)`);
+  }
+
+  await new Promise((r) => setTimeout(r, 500));
+
+  if ((release.mode === 'apply' || release.mode === 'destroy') && release.infrastructureId) {
+    const infra = await getInfrastructure(release.infrastructureId);
+    if (infra && infra.status !== 'destroyed') {
+      await appendReleaseLog(
+        release.id,
+        '[grid] fail-safe cleanup: attempting terraform destroy for partial changes…'
+      );
+      const result = await cleanupPartialTerraform(infra, (line) =>
+        appendReleaseLog(release.id, line)
+      );
+      await appendReleaseLog(release.id, `[grid] cleanup: ${result.message}`);
+    }
+  } else if (release.mode === 'plan') {
+    await appendReleaseLog(release.id, '[grid] plan kill — no cloud cleanup required');
+  }
+
+  const latest = (await getRelease(release.id))!;
+  latest.status = 'cancelled';
+  latest.message = `Killed by ${actor}`;
+  latest.completedAt = new Date().toISOString();
+  await saveRelease(latest);
+  await appendReleaseLog(latest.id, `[grid] release cancelled by ${actor}`);
+  await auditCancel(latest, actor, 'deploying');
+  void processReleaseQueue();
+  return (await getRelease(latest.id))!;
+}
+
+async function auditCancel(
+  release: Release,
+  actor: string,
+  from: 'queued' | 'deploying'
+): Promise<void> {
+  try {
+    const { recordAudit } = await import('./auditStore');
+    await recordAudit({
+      action: 'release.cancel',
+      actor,
+      resourceType: 'release',
+      resourceId: release.id,
+      resourceName: release.name,
+      summary:
+        from === 'queued'
+          ? `Cancelled queued release: ${release.name}`
+          : `Killed running release: ${release.name}`,
+      details: {
+        mode: release.mode,
+        environment: release.environment,
+        infrastructureId: release.infrastructureId,
+        deploymentId: release.deploymentId,
+        from,
+      },
+    });
+  } catch {
+    /* ignore */
+  }
 }

@@ -14,6 +14,7 @@ import {
   resolveBearerToken,
 } from '../auth/authService';
 import { getActorEmail, requireRole } from '../middleware/requireAuth';
+import { recordAudit } from '../services/auditStore';
 
 const router = Router();
 
@@ -78,8 +79,22 @@ router.post('/auth/login', async (req, res) => {
   }
   try {
     const result = await login(parsed.data.email, parsed.data.password);
+    await recordAudit({
+      action: 'auth.login',
+      actor: result.user.email,
+      actorRole: result.user.role,
+      summary: `User signed in: ${result.user.email}`,
+      resourceType: 'user',
+      resourceId: result.user.id,
+    });
     res.json(result);
   } catch (err) {
+    await recordAudit({
+      action: 'auth.login',
+      actor: parsed.data.email,
+      summary: `Failed sign-in for ${parsed.data.email}`,
+      outcome: 'failure',
+    });
     sendAuthError(res, err);
   }
 });
@@ -92,6 +107,14 @@ router.post('/auth/register', async (req, res) => {
   try {
     const body = RegisterSchema.parse(req.body);
     const user = await registerUser(body);
+    await recordAudit({
+      action: 'auth.register',
+      actor: user.email,
+      actorRole: user.role,
+      summary: `Registered user: ${user.email}`,
+      resourceType: 'user',
+      resourceId: user.id,
+    });
     res.status(201).json({ user });
   } catch (err) {
     sendAuthError(res, err);
@@ -117,10 +140,16 @@ router.post('/auth/refresh', async (req, res) => {
 });
 
 router.post('/auth/logout', async (req, res) => {
+  const actor = getActorEmail(req);
   if (!config.auth.disabled) {
     const bearer = extractTokenFromRequest(req.header('authorization'));
     await logout(bearer);
   }
+  await recordAudit({
+    action: 'auth.logout',
+    actor,
+    summary: `User signed out: ${actor}`,
+  });
   res.status(204).end();
 });
 
@@ -133,7 +162,16 @@ router.post('/auth/users', requireRole('admin'), async (req, res) => {
   try {
     const body = CreateUserSchema.parse(req.body);
     const user = await adminCreateUser(body);
-    console.log(`[auth] User ${user.email} created by ${getActorEmail(req)}`);
+    await recordAudit({
+      action: 'auth.user.create',
+      actor: getActorEmail(req),
+      actorRole: req.gridUser?.role,
+      summary: `Admin created user ${user.email} (${user.role})`,
+      resourceType: 'user',
+      resourceId: user.id,
+      resourceName: user.email,
+      details: { role: user.role },
+    });
     res.status(201).json({ user });
   } catch (err) {
     sendAuthError(res, err);
@@ -148,6 +186,16 @@ router.patch('/auth/users/:id', requireRole('admin'), async (req, res) => {
       res.status(404).json({ code: 'not_found', message: 'User not found' });
       return;
     }
+    await recordAudit({
+      action: 'auth.user.update',
+      actor: getActorEmail(req),
+      actorRole: req.gridUser?.role,
+      summary: `Admin updated user ${user.email}`,
+      resourceType: 'user',
+      resourceId: user.id,
+      resourceName: user.email,
+      details: body as Record<string, unknown>,
+    });
     res.json({ user });
   } catch (err) {
     sendAuthError(res, err);

@@ -131,6 +131,7 @@ export type ReleaseStatus =
   | 'deploying'
   | 'success'
   | 'failed'
+  | 'cancelled'
   | 'rolled_back';
 
 export type ReleaseType = 'terraform' | 'kubernetes' | 'custom';
@@ -188,4 +189,18 @@ export interface Environment {
   unitCount?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AuditEvent {
+  id: string;
+  at: string;
+  action: string;
+  actor: string;
+  actorRole?: string;
+  resourceType?: string;
+  resourceId?: string;
+  resourceName?: string;
+  summary: string;
+  details?: Record<string, unknown>;
+  outcome: 'success' | 'failure' | 'denied';
 }

@@ -21,7 +21,7 @@ import {
   restoreInfrastructureToConfig,
   syncInfrastructuresFromConfigRoot,
 } from '../services/configRootSync';
-import { enqueueRelease } from '../services/releaseService';
+import { enqueueRelease, cancelRelease } from '../services/releaseService';
 import { getRelease, listReleases } from '../services/releaseStore';
 import {
   DeployMapError,
@@ -33,8 +33,9 @@ import type {
   InfrastructureListItem,
   LifecycleMode,
 } from '../types/api';
-import { getActorEmail } from '../middleware/requireAuth';
+import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
 import { resolveResourceType } from '../services/resourceType';
+import { listAuditEvents, recordAudit } from '../services/auditStore';
 
 const router = Router();
 
@@ -173,6 +174,17 @@ router.post('/infrastructures', async (req, res) => {
     driftDetection: body.driftDetection ?? false,
   });
 
+  await recordAudit({
+    action: 'infra.create',
+    actor: getActorEmail(req),
+    actorRole: getActorRole(req),
+    summary: `Created infrastructure ${infra.name}`,
+    resourceType: 'infrastructure',
+    resourceId: infra.id,
+    resourceName: infra.name,
+    details: { environment: infra.environment, provider: infra.provider },
+  });
+
   const shouldApply = req.query.apply === 'true' || req.query.apply === '1';
   const shouldPlan = req.query.plan === 'true' || req.query.plan === '1';
 
@@ -214,6 +226,15 @@ router.patch('/infrastructures/:id', async (req, res) => {
   if (body.driftDetection !== undefined) infra.driftDetection = body.driftDetection;
   infra.updatedAt = new Date().toISOString();
   await saveInfrastructure(infra);
+  await recordAudit({
+    action: 'infra.update',
+    actor: getActorEmail(req),
+    actorRole: getActorRole(req),
+    summary: `Updated infrastructure ${infra.name}`,
+    resourceType: 'infrastructure',
+    resourceId: infra.id,
+    resourceName: infra.name,
+  });
   res.json(infra);
 });
 
@@ -289,6 +310,16 @@ router.post('/infrastructures/:id/restore-config', async (req, res) => {
   }
   try {
     const restored = await restoreInfrastructureToConfig(infra);
+    await recordAudit({
+      action: 'infra.restore_config',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `Restored config for ${restored.name}`,
+      resourceType: 'infrastructure',
+      resourceId: restored.id,
+      resourceName: restored.name,
+      details: { gitPath: restored.gitPath },
+    });
     res.json(restored);
   } catch (err) {
     res.status(500).json({
@@ -298,15 +329,9 @@ router.post('/infrastructures/:id/restore-config', async (req, res) => {
   }
 });
 
-/** Legacy alias for apply */
+/** Legacy alias for apply — still creates an apply release */
 router.post('/infrastructures/:id/deploy', async (req, res) => {
-  const infra = await getInfrastructure(req.params.id);
-  if (!infra) {
-    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
-    return;
-  }
-  const deployment = await startLifecycle(infra, 'apply', getActorEmail(req));
-  res.status(202).json(deployment);
+  await enqueueInfrastructureRelease(req, res, 'apply');
 });
 
 router.post('/infrastructures/:id/drift-check', async (req, res) => {
@@ -318,6 +343,16 @@ router.post('/infrastructures/:id/drift-check', async (req, res) => {
   try {
     const { checkInfrastructureDrift } = await import('../services/driftService');
     const report = await checkInfrastructureDrift(infra);
+    await recordAudit({
+      action: 'infra.drift_check',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `Drift check: ${infra.name} — ${report.summary}`,
+      resourceType: 'infrastructure',
+      resourceId: infra.id,
+      resourceName: infra.name,
+      details: { hasDrift: report.hasDrift, kind: report.kind },
+    });
     res.json(report);
   } catch (err) {
     res.status(500).json({
@@ -341,19 +376,15 @@ router.post('/infrastructures/:id/clone', async (req, res) => {
   res.status(201).json(clone);
 });
 
-/** DELETE runs terraform destroy */
+/** DELETE enqueues a destroy release (admin only) */
 router.delete('/infrastructures/:id', async (req, res) => {
-  const infra = await getInfrastructure(req.params.id);
-  if (!infra) {
-    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
-    return;
-  }
-  if (infra.status === 'destroyed') {
-    res.status(204).end();
-    return;
-  }
-  const deployment = await startLifecycle(infra, 'destroy', getActorEmail(req));
-  res.status(202).json(deployment);
+  await enqueueInfrastructureRelease(req, res, 'destroy');
+});
+
+router.get('/audit', requireRole('admin'), async (req, res) => {
+  const raw = typeof req.query.limit === 'string' ? Number(req.query.limit) : 200;
+  const limit = Number.isFinite(raw) ? raw : 200;
+  res.json(await listAuditEvents(limit));
 });
 
 router.get('/deployments', async (_req, res) => {
@@ -666,6 +697,25 @@ router.post('/releases', async (req, res) => {
 
 router.post('/releases/:id/rollback', (_req, res) => {
   res.status(501).json({ code: 'not_implemented', message: 'Rollback not enabled yet' });
+});
+
+/** Admin: cancel queued release or kill deploying release (+ fail-safe terraform cleanup). */
+router.post('/releases/:id/cancel', requireRole('admin'), async (req, res) => {
+  try {
+    const release = await cancelRelease(req.params.id, getActorEmail(req));
+    res.json(release);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = message.includes('not found')
+      ? 404
+      : message.includes('already')
+        ? 409
+        : 400;
+    res.status(code).json({
+      code: code === 404 ? 'not_found' : code === 409 ? 'conflict' : 'release_error',
+      message,
+    });
+  }
 });
 
 router.get('/approvals', empty);
