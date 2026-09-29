@@ -17,7 +17,7 @@ import {
 } from '../store/gitopsStore';
 import { hashContent } from './gitopsHash';
 
-/** Stable namespace for path → infra id */
+/** UUID v5 namespace for path → infra id */
 const GRID_GITOPS_NS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
 function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -94,7 +94,7 @@ async function discoverGridJsonFiles(
       if (skipNames.has(ent.name.toLowerCase())) continue;
       if (ent.name === 'CATALOG_INDEX.json') continue;
 
-      // Legacy names always accepted; other *.json must look like Grid config
+      // Legacy grid.json names; other *.json must look like Grid config
       const legacy =
         ent.name === 'grid.json' || ent.name.endsWith('.grid.json');
       if (!legacy) {
@@ -118,13 +118,8 @@ async function discoverGridJsonFiles(
 }
 
 /**
- * Ensure GRID_CONFIG_ROOT is the desired-state working tree.
- *
- * - Already a git checkout → fetch/checkout the configured branch.
- * - Local fixture / grid init without .git → use files on disk as-is (do NOT wipe).
- * - Empty directory + remote URL → clone into GRID_CONFIG_ROOT.
- *
- * Archive/ writes always target this same tree (local demo or GitHub repo).
+ * Ensure GRID_CONFIG_ROOT is ready as the desired-state tree.
+ * Git checkout → fetch/checkout; non-empty/local → leave as-is; empty + URL → clone.
  */
 async function ensureClone(settings: GitOpsSettings): Promise<string> {
   const root = gitopsCloneDir();
@@ -149,14 +144,14 @@ async function ensureClone(settings: GitOpsSettings): Promise<string> {
     return root;
   }
 
-  // Local testing / grid init without remotes: never delete the tree.
+  // Non-empty or no remote: keep on-disk tree.
   const entries = await fs.readdir(root);
   const meaningful = entries.filter((e) => e !== '.DS_Store');
   if (meaningful.length > 0 || !settings.repoUrl) {
     return root;
   }
 
-  // Empty root + remote configured → clone into GRID_CONFIG_ROOT.
+  // Empty root + remote → clone into GRID_CONFIG_ROOT.
   const clone = await runGit(
     [
       'clone',
@@ -179,15 +174,14 @@ export interface SyncResult {
   created: string[];
   updated: string[];
   unchanged: string[];
-  /** Infra whose gitPath no longer exists — marked stale; NOT auto-destroyed */
+  /** Infra with missing gitPath — marked stale; not auto-destroyed */
   stale: string[];
   commit?: string;
   commitMessage?: string;
 }
 
 /**
- * Pull / read the customer's desired-state tree at GRID_CONFIG_ROOT and upsert
- * Infrastructure records. Same root for local demo-infra and remote GitHub.
+ * Read GRID_CONFIG_ROOT desired-state JSON and upsert Infrastructure records.
  */
 export async function syncGitOpsRepo(): Promise<SyncResult> {
   const settings = await loadGitOpsSettings();
@@ -249,7 +243,7 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
           environment: environmentFromConfig(cfg),
           provider: providerFromConfig(cfg),
           driftDetection: true,
-          // File is back — clear stale if it was marked
+          // Clear stale when file reappears
           status: existing.status === 'stale' ? 'pending' : existing.status,
           updatedAt: new Date().toISOString(),
         };
@@ -259,7 +253,7 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
       }
     }
 
-    // JSON removed from repo → mark stale only (never auto-destroy)
+    // Missing JSON → stale only (no auto-destroy)
     const stale: string[] = [];
     const all = await listInfrastructures();
     for (const infra of all) {
@@ -309,5 +303,4 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
   }
 }
 
-// re-export for callers that imported hash from sync
 export { hashContent };

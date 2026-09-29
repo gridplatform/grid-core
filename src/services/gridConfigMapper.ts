@@ -43,14 +43,14 @@ function toDisplayProvider(providerId: string): CloudProviderType {
   return 'On-Prem';
 }
 
-/** Normalize UI/API env labels to CLI metadata.environment values. */
+/** Normalize UI/API env labels to CLI metadata.environment. */
 function toCliEnvironment(
   environment: string
 ): 'development' | 'staging' | 'production' {
   const e = environment.toLowerCase();
   if (e === 'prod' || e === 'production') return 'production';
   if (e === 'staging' || e === 'stage') return 'staging';
-  // legacy "sandbox" maps to development (use env clone for isolation)
+  // "sandbox" → development
   return 'development';
 }
 
@@ -64,7 +64,7 @@ function slug(name: string): string {
   );
 }
 
-/** grid.json carries these at the top level, so they are not module inputs. */
+/** Keys that belong on grid.json top-level, not module inputs. */
 const TOP_LEVEL_CONFIG_KEYS = new Set([
   'provider',
   'project',
@@ -74,12 +74,9 @@ const TOP_LEVEL_CONFIG_KEYS = new Set([
 ]);
 
 /**
- * Map a deploy request onto grid.json.
- *
- * The API does not feature-flag deploys — the console hides disabled types.
- * NETWORK_COMPOSER_TYPES / COMPUTE_COMPOSER_TYPES expand into the recipes the
- * CLI composers expect. Everything else is a passthrough resource (config keys
- * → Terraform module variables once CLI generic generate is wired).
+ * Map a deploy request to grid.json.
+ * Composer types expand to network/compute recipes; others pass through as module vars.
+ * Deploy gating is UI-only (feature flags), not enforced here.
  */
 export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDeploy {
   if (req.engine === 'kubernetes') {

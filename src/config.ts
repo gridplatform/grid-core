@@ -10,50 +10,38 @@ function requiredPath(envValue: string | undefined, fallback: string): string {
 const cwd = process.cwd();
 
 /**
- * Grid Core owns platform paths. The CLI is an add-on: when Core spawns it,
- * these values are injected as env (see cliChildEnv). Do not hardcode
- * grid-config / module-bank locations in the CLI as product SoT.
- *
- * GRID_CONFIG_ROOT is the single desired-state working tree for local demos
- * and remote GitHub checkouts — intent JSON + archive/ always live there.
+ * Platform paths owned by Core; injected into CLI children via cliChildEnv.
+ * GRID_CONFIG_ROOT is the single desired-state tree (intent JSON + archive/).
  */
 export const config = {
   port: Number(process.env.PORT || 3000),
   dataDir: requiredPath(process.env.GRID_DATA_DIR, path.join(cwd, 'data')),
-  /** Directory where terraform workspaces are written */
+  /** Terraform workspace root for API-only units */
   workDir: requiredPath(process.env.GRID_WORK_DIR, path.join(cwd, 'workspaces')),
-  /**
-   * Path to grid-cli package root (must contain templates/ and built or tsx-runnable src).
-   * Default: sibling ../grid-cli
-   */
+  /** grid-cli package root (templates/ + dist or src) */
   cliRoot: requiredPath(process.env.GRID_CLI_ROOT, path.join(cwd, '..', 'grid-cli')),
   /**
-   * Desired-state root (customer Git repo in real installs).
-   *
-   * - Production / normal: set GRID_CONFIG_ROOT to the repo from `grid init`.
-   * - Local API testing only: omit it and we fall back to ../demo-infra when
-   *   GRID_USE_DEMO=1, otherwise still ../demo-infra with a startup warning.
+   * Desired-state root. Set GRID_CONFIG_ROOT to the grid init repo;
+   * unset falls back to ../demo-infra (fixture).
    */
   configRoot: requiredPath(
     process.env.GRID_CONFIG_ROOT,
     path.join(cwd, '..', 'demo-infra')
   ),
-  /** True when using the demo-infra test fixture (not a customer root). */
+  /** True when configRoot is the demo-infra fixture */
   configRootIsDemoFixture:
     !process.env.GRID_CONFIG_ROOT ||
     process.env.GRID_USE_DEMO === '1' ||
     process.env.GRID_USE_DEMO === 'true',
-  /**
-   * grid-terraform module bank. Injected to CLI as GRID_MODULE_BANK.
-   */
+  /** Module bank path; passed to CLI as GRID_MODULE_BANK */
   moduleBank: requiredPath(
     process.env.GRID_MODULE_BANK,
     path.join(cwd, '..', 'grid-terraform')
   ),
   terraformBin: process.env.GRID_TERRAFORM_BIN || 'terraform',
-  /** When true, API-triggered applies use -auto-approve */
+  /** API applies use -auto-approve unless GRID_AUTO_APPROVE=false */
   autoApprove: process.env.GRID_AUTO_APPROVE !== 'false',
-  /** Optional bootstrap GitOps repo (installer can also set via API) */
+  /** Optional GitOps bootstrap (also settable via API) */
   gitops: {
     repoUrl: process.env.GRID_GITOPS_REPO_URL || '',
     branch: process.env.GRID_GITOPS_BRANCH || 'main',
@@ -69,9 +57,7 @@ export const config = {
   },
 };
 
-/**
- * Env passed to every CLI child process. Core is the source of truth for paths.
- */
+/** Env injected into every CLI child. Core owns path SoT. */
 export function cliChildEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,

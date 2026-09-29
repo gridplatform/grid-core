@@ -69,7 +69,7 @@ async function ensureGenerated(infra: Infrastructure, generatedDir: string): Pro
 
 /**
  * Drift = desired state (Git / configJson) vs Terraform state (live).
- * terraform plan -detailed-exitcode: 0=sync, 2=changes, 1=error
+ * plan -detailed-exitcode: 0=sync, 2=changes, 1=error.
  */
 export async function checkInfrastructureDrift(infra: Infrastructure): Promise<DriftReport> {
   const gitChangedSinceApply =

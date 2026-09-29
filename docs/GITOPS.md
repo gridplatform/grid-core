@@ -3,9 +3,9 @@
 Grid does **not** treat `workspaces/` + `data/store.json` as the source of truth
 for what *should* exist. Those are runtime caches.
 
-**Source of truth:** `GRID_CONFIG_ROOT` — one working tree for **local testing** and
-**remote GitHub** alike. Intent JSON and `archive/` instance Terraform always
-live here. Behavior does not fork by transport.
+**Source of truth:** `GRID_CONFIG_ROOT` — one working tree for local testing and
+remote GitHub alike. Intent JSON and `archive/` instance Terraform always live
+here.
 
 ## Repo layout (same local or remote)
 
@@ -80,7 +80,8 @@ GRID_GITOPS_SYNC_INTERVAL_SEC=60
 | `terraform plan` exit 2 | Live/state would change if you Apply current desired JSON |
 | Plan empty (exit 0) | Live matches desired JSON |
 
-Reverse-generating a full Grid JSON from Terraform state is **not** fully automated yet; drift reports include a **state inventory** plus guidance so you can update Git by hand.
+Reverse-generating a full Grid JSON from Terraform state is not fully automated;
+drift reports include a **state inventory** plus guidance so you can update Git by hand.
 
 ## API
 

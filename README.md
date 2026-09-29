@@ -40,7 +40,7 @@ grid init --git --sample          # from grid-cli (npm run grid -- init …)
 export GRID_CONFIG_ROOT=$PWD      # point grid-core at THIS repo
 # start grid-core with that env
 
-grid generate -c development/example-vpc/grid.json --config-dir "$GRID_CONFIG_ROOT" -o ./out
+grid generate -c aws/development/vpc/example-vpc.json --config-dir "$GRID_CONFIG_ROOT"
 ```
 
 `POST /api/v1/deployments` with `{ name, engine, provider, environment, resourceType, config }`.

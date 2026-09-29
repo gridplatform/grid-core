@@ -1,6 +1,6 @@
 /**
- * Types aligned with Grid Console (console-grid-view / grid-ui) API contract.
- * Keep in sync with grid-ui/src/types/api.ts
+ * Types aligned with Grid Console (grid-ui) API contract.
+ * Keep in sync with grid-ui/src/types/api.ts.
  */
 
 export type HealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
@@ -11,7 +11,7 @@ export type ResourceStatus =
   | 'degraded'
   | 'pending'
   | 'destroyed'
-  /** Desired-state JSON removed from Git; awaiting explicit destroy confirmation */
+  /** Desired-state JSON removed from Git; awaiting explicit destroy */
   | 'stale';
 export type DeploymentStatus =
   | 'pending'
@@ -82,13 +82,13 @@ export interface Deployment {
   id: string;
   infrastructureId: string;
   status: DeploymentStatus;
-  /** Desired-state lifecycle step for this run */
+  /** Lifecycle step for this run */
   mode?: LifecycleMode;
   progress?: number;
   startedAt: string;
   completedAt?: string;
   logs: string[];
-  /** Human-readable terraform plan output / summary */
+  /** Terraform plan output / summary */
   planSummary?: string;
   triggeredBy: string;
   gitCommit?: string;

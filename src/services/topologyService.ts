@@ -1,9 +1,6 @@
 import type { Infrastructure, TopologyProvider } from '../types/api';
 
-/**
- * Build a console-compatible topology view from stored infrastructures.
- * Live AWS detail comes from configJson after CLI deploy.
- */
+/** Build a console-compatible topology view from stored infrastructures. */
 export function buildTopologyFromInfrastructures(
   items: Infrastructure[]
 ): TopologyProvider[] {

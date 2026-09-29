@@ -1,6 +1,6 @@
 /**
- * Normalize provider spellings from the console / CLI onto one id.
- * Feature on/off lives only in grid-ui (src/config/featureFlags.ts) — not here.
+ * Normalize provider spellings from console/CLI onto one id.
+ * Deploy visibility is UI-only (grid-ui featureFlags).
  */
 export function normalizeProviderId(raw?: string): string {
   const p = (raw || 'aws').trim().toLowerCase();

@@ -7,11 +7,8 @@ const SETTINGS_FILE = () => path.join(config.dataDir, 'gitops-settings.json');
 const STATUS_FILE = () => path.join(config.dataDir, 'gitops-status.json');
 
 /**
- * Working tree for desired state = GRID_CONFIG_ROOT.
- *
- * Local demo (demo-infra) and a remote GitHub checkout use the **same** root:
- * intent JSON + archive/ instance Terraform always live here. No separate clone
- * sandbox that would diverge from archive/ writes.
+ * Desired-state working tree (GRID_CONFIG_ROOT).
+ * Same root for local fixture and remote checkout; archive/ writes here.
  */
 export function gitopsCloneDir(): string {
   return config.configRoot;

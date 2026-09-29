@@ -1,9 +1,4 @@
-/**
- * Deploy / lifecycle entrypoint for grid-core.
- *
- * Implementation lives in lifecycleService.ts (plan | apply | destroy).
- * This module re-exports so existing imports keep working.
- */
+/** Re-exports lifecycleService (plan | apply | destroy). */
 export {
   runLifecycle,
   runInfrastructureDeploy,

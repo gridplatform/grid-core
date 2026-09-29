@@ -230,7 +230,7 @@ router.post('/infrastructures/:id/destroy', async (req, res) => {
   res.status(202).json(deployment);
 });
 
-/** Legacy alias → apply */
+/** Legacy alias for apply */
 router.post('/infrastructures/:id/deploy', async (req, res) => {
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
@@ -273,7 +273,7 @@ router.post('/infrastructures/:id/clone', async (req, res) => {
   res.status(201).json(clone);
 });
 
-/** DELETE runs real terraform destroy */
+/** DELETE runs terraform destroy */
 router.delete('/infrastructures/:id', async (req, res) => {
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
@@ -385,10 +385,7 @@ router.get('/deployments/:id/logs', async (req, res) => {
   });
 });
 
-/**
- * Live CLI/terraform logs via Server-Sent Events.
- * Streams new log lines as lifecycleService appends them.
- */
+/** SSE stream of live CLI/terraform log lines. */
 router.get('/deployments/:id/logs/stream', async (req, res) => {
   const initial = await getDeployment(req.params.id);
   if (!initial) {
@@ -439,7 +436,7 @@ router.get('/deployments/:id/logs/stream', async (req, res) => {
         mode: d.mode,
       });
     } else {
-      // heartbeat keeps proxies from closing idle streams
+      // Keep proxies from closing idle streams
       writeEvent('ping', { status: d.status, progress: d.progress });
     }
 
