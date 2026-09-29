@@ -11,6 +11,14 @@
     "type-check": "tsc --noEmit"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gridplatform/grid-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gridplatform/grid-core/issues"
+  },
+  "homepage": "https://github.com/gridplatform/grid-core#readme",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
