@@ -28,33 +28,43 @@ function runCapture(
 }
 
 async function ensureGenerated(infra: Infrastructure, generatedDir: string): Promise<number> {
-  const workspace = path.join(config.workDir, infra.id);
-  await fs.ensureDir(workspace);
-  const configPath = path.join(workspace, 'grid.json');
+  const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
+  const writeArchive = Boolean(
+    gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')
+  );
+
+  let configPath: string;
+  let terraformDir = generatedDir;
+  if (writeArchive && gitPath) {
+    configPath = path.join(config.configRoot, gitPath);
+    terraformDir = path.join(config.configRoot, 'archive', gitPath.replace(/\.json$/i, ''));
+  } else {
+    const workspace = path.join(config.workDir, infra.id);
+    await fs.ensureDir(workspace);
+    configPath = path.join(workspace, 'grid.json');
+  }
+
+  await fs.ensureDir(path.dirname(configPath));
   await fs.writeJSON(configPath, infra.configJson, { spaces: 2 });
-  await fs.ensureDir(generatedDir);
+  await fs.ensureDir(terraformDir);
 
   const cliEntryJs = path.join(config.cliRoot, 'dist', 'index.js');
   const cliEntryTs = path.join(config.cliRoot, 'src', 'index.ts');
   const useCompiled = await fs.pathExists(cliEntryJs);
 
-  if (useCompiled) {
-    return (
-      await runCapture(
-        process.execPath,
-        [cliEntryJs, 'generate', '--config', configPath, '--output', generatedDir, '--format', 'terraform'],
-        config.cliRoot
-      )
-    ).code;
+  const args = ['generate', '--config', configPath, '--format', 'terraform'];
+  if (writeArchive) {
+    args.push('--config-dir', config.configRoot);
+  } else {
+    args.push('--output', terraformDir);
   }
 
-  return (
-    await runCapture(
-      path.join(config.cliRoot, 'node_modules', '.bin', 'tsx'),
-      [cliEntryTs, 'generate', '--config', configPath, '--output', generatedDir, '--format', 'terraform'],
-      config.cliRoot
-    )
-  ).code;
+  const bin = useCompiled
+    ? process.execPath
+    : path.join(config.cliRoot, 'node_modules', '.bin', 'tsx');
+  const entry = useCompiled ? cliEntryJs : cliEntryTs;
+
+  return (await runCapture(bin, [entry, ...args], config.cliRoot)).code;
 }
 
 /**
@@ -75,10 +85,15 @@ export async function checkInfrastructureDrift(infra: Infrastructure): Promise<D
     applyGitDesired:
       'Run Plan, then Apply to move live infrastructure toward the JSON currently in Git (desired state).',
     updateGitToMatchLive:
-      'If live is correct, update grid.json in your Git repo to match reality, commit, then Sync. Automatic reverse-map from state → full Grid JSON is limited; use the state inventory + Plan excerpt.',
+      'If live is correct, update the Grid JSON in your Git repo to match reality, commit, then Sync. Automatic reverse-map from state → full Grid JSON is limited; use the state inventory + Plan excerpt.',
   };
 
-  const workspaceGenerated = path.join(config.workDir, infra.id, 'generated');
+  const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
+  const workspaceGenerated =
+    gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')
+      ? path.join(config.configRoot, 'archive', gitPath.replace(/\.json$/i, ''))
+      : path.join(config.workDir, infra.id, 'generated');
+
   const genCode = await ensureGenerated(infra, workspaceGenerated);
   if (genCode !== 0) {
     return {

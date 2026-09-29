@@ -6,8 +6,15 @@ import type { GitOpsRuntimeStatus, GitOpsSettings } from '../types/gitops';
 const SETTINGS_FILE = () => path.join(config.dataDir, 'gitops-settings.json');
 const STATUS_FILE = () => path.join(config.dataDir, 'gitops-status.json');
 
+/**
+ * Working tree for desired state = GRID_CONFIG_ROOT.
+ *
+ * Local demo (demo-infra) and a remote GitHub checkout use the **same** root:
+ * intent JSON + archive/ instance Terraform always live here. No separate clone
+ * sandbox that would diverge from archive/ writes.
+ */
 export function gitopsCloneDir(): string {
-  return path.join(config.dataDir, 'gitops-repo');
+  return config.configRoot;
 }
 
 export async function loadGitOpsSettings(): Promise<GitOpsSettings | null> {
