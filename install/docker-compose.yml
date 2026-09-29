@@ -1,0 +1,66 @@
+# Grid control plane — Docker Compose
+#
+# From a clone of grid-core:
+#   cp install/.env.example install/.env   # edit password!
+#   docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+#
+# UI image is built from the public grid-ui GitHub repo.
+# Core image builds grid-cli from GitHub during docker build.
+
+name: grid
+
+services:
+  core:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        GRID_CLI_REF: ${GRID_CLI_REF:-main}
+        TERRAFORM_VERSION: ${TERRAFORM_VERSION:-1.9.8}
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      GRID_CLI_ROOT: /opt/grid/grid-cli
+      GRID_DATA_DIR: /var/lib/grid/data
+      GRID_WORK_DIR: /var/lib/grid/workspaces
+      GRID_CONFIG_ROOT: /var/lib/grid/desired-state
+      GRID_MODULE_BANK: ${GRID_MODULE_BANK:-https://github.com/gridplatform/grid-terraform.git}
+      GRID_MODULE_BANK_REF: ${GRID_MODULE_BANK_REF:-main}
+      GRID_GITOPS_REPO_URL: ${GRID_GITOPS_REPO_URL:-https://github.com/gridplatform/grid-config.git}
+      GRID_GITOPS_BRANCH: ${GRID_GITOPS_BRANCH:-main}
+      GRID_AUTH_ADMIN_EMAIL: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local}
+      GRID_AUTH_ADMIN_PASSWORD: ${GRID_AUTH_ADMIN_PASSWORD:?set GRID_AUTH_ADMIN_PASSWORD in install/.env}
+      GRID_AUTO_APPROVE: ${GRID_AUTO_APPROVE:-true}
+    volumes:
+      - grid-data:/var/lib/grid/data
+      - grid-workspaces:/var/lib/grid/workspaces
+      - grid-desired-state:/var/lib/grid/desired-state
+    # Optional: mount host AWS/GCP creds for terraform apply from this host
+    # volumes:
+    #   - ${HOME}/.aws:/root/.aws:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  ui:
+    build:
+      context: ${GRID_UI_CONTEXT:-https://github.com/gridplatform/grid-ui.git#main}
+      dockerfile: Dockerfile
+      args:
+        VITE_GRID_API_URL: /api/v1
+    ports:
+      - "${GRID_HTTP_PORT:-80}:80"
+    depends_on:
+      core:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  grid-data:
+  grid-workspaces:
+  grid-desired-state:
