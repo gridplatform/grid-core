@@ -70,8 +70,18 @@ GRID_MODULE_BANK_REF=main
 GRID_GITOPS_REPO_URL=https://github.com/gridplatform/grid-config.git
 GRID_GITOPS_BRANCH=main
 GRID_GITOPS_PATH=           # empty = projects/… at repo root
-GRID_GITOPS_SYNC_INTERVAL_SEC=60
+GRID_GITOPS_SYNC_INTERVAL_SEC=600
 ```
+
+Auto-sync uses a **fixed 10-minute interval** by default when `GRID_GITOPS_REPO_URL` is set
+(`600` seconds). Set to `0` to disable periodic sync (manual **Sync now** still works).
+
+Behavior (snooze-alarm style):
+
+- Each tick runs `git pull --ff-only` and reconciles infrastructure from JSON.
+- If the previous sync is **still running**, the tick is **skipped** — no queue, no overlap;
+  the next attempt happens on the following interval.
+- If a sync **fails**, Core does **not** retry immediately; it waits until the next interval.
 
 ## What “drift” means here
 
@@ -93,4 +103,4 @@ drift reports include a **state inventory** plus guidance so you can update Git 
 | `POST` | `/api/v1/gitops/sync` |
 | `POST` | `/api/v1/infrastructures/:id/drift-check` |
 
-See also [LIFECYCLE.md](./LIFECYCLE.md).
+See also [LIFECYCLE.md](./LIFECYCLE.md) and [KUBERNETES.md](./KUBERNETES.md) (cluster vs node pool vs workload units).

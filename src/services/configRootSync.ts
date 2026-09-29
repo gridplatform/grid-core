@@ -13,6 +13,7 @@ import {
 import { hashContent } from './gitopsHash';
 import { projectSlugFromGitPath } from './projectsService';
 import { KNOWN_CLOUD_SEGMENTS, providerFromConfig } from './providerLabels';
+import { invalidateConfigDiscoveryCache } from './configDiscovery';
 
 const NS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const SKIP_DIRS = new Set(['.git', '.grid', 'node_modules', 'scripts', 'archive']);
@@ -231,6 +232,7 @@ async function runConfigRootSync(): Promise<SyncStats> {
     }
   }
 
+  invalidateConfigDiscoveryCache();
   return { synced, stale, removed };
 }
 

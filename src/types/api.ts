@@ -23,20 +23,8 @@ export type DeploymentStatus =
 export type LifecycleMode = 'plan' | 'apply' | 'destroy';
 export type CloudProviderType = string;
 
-export type InfrastructureType =
-  | 'single-vm'
-  | 'vm-cluster'
-  | 'k8s-deployment'
-  | 'k8s-service'
-  | 'k8s-ingress'
-  | 'k8s-cronjob'
-  | 'k8s-statefulset'
-  | 'k8s-daemonset'
-  | 'k8s-storage'
-  | 'managed-service'
-  | 'network'
-  | 'gpu-node'
-  | 'gpu-pool';
+/** Catalog / module resource type (e.g. alb, vpc, access-analyzer). */
+export type InfrastructureType = string;
 
 export interface Infrastructure {
   id: string;
@@ -75,6 +63,7 @@ export interface InfrastructureListItem {
   memory?: string;
   environment: string;
   provider: CloudProviderType;
+  project?: string;
   connections: string[];
   cluster?: string;
   config?: Record<string, unknown>;

@@ -173,10 +173,43 @@ export interface SyncResult {
   commitMessage?: string;
 }
 
+export type GitOpsSyncBusy = 'skip' | 'join' | 'fail';
+
+export class GitOpsSyncInProgressError extends Error {
+  constructor() {
+    super('GitOps sync is already in progress');
+    this.name = 'GitOpsSyncInProgressError';
+  }
+}
+
+let syncInFlight: Promise<SyncResult> | null = null;
+
+export function isGitOpsSyncInProgress(): boolean {
+  return syncInFlight !== null;
+}
+
 /**
  * Read GRID_CONFIG_ROOT desired-state JSON and upsert Infrastructure records.
+ *
+ * @param ifBusy — auto-sync uses `skip` (snooze to next interval); manual sync uses `fail`.
  */
-export async function syncGitOpsRepo(): Promise<SyncResult> {
+export async function syncGitOpsRepo(options?: {
+  ifBusy?: GitOpsSyncBusy;
+}): Promise<SyncResult | null> {
+  const ifBusy = options?.ifBusy ?? 'join';
+  if (syncInFlight) {
+    if (ifBusy === 'skip') return null;
+    if (ifBusy === 'fail') throw new GitOpsSyncInProgressError();
+    return syncInFlight;
+  }
+
+  syncInFlight = runGitOpsSyncInternal().finally(() => {
+    syncInFlight = null;
+  });
+  return syncInFlight;
+}
+
+async function runGitOpsSyncInternal(): Promise<SyncResult> {
   const settings = await loadGitOpsSettings();
   if (!settings || !settings.enabled || !settings.repoUrl) {
     throw new Error('GitOps is not configured. Set repo URL under GitOps settings.');
@@ -289,6 +322,8 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
 
     // Invalidate list-sync TTL so next UI load sees the new tree.
     const { syncInfrastructuresFromConfigRoot } = await import('./configRootSync');
+    const { invalidateConfigDiscoveryCache } = await import('./configDiscovery');
+    invalidateConfigDiscoveryCache();
     void syncInfrastructuresFromConfigRoot({ force: true });
 
     return result;

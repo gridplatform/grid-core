@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import v1 from './routes/v1';
 import gitops from './routes/gitops';
+import auth from './routes/auth';
+import { attachAuth } from './middleware/requireAuth';
 
 export function createApp() {
   const app = express();
@@ -17,6 +19,10 @@ export function createApp() {
     res.json({ status: 'ok' });
   });
 
+  app.use('/api/v1', (req, res, next) => {
+    void attachAuth(req, res, next);
+  });
+  app.use('/api/v1', auth);
   app.use('/api/v1', v1);
   app.use('/api/v1', gitops);
 
