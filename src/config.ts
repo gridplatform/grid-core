@@ -23,6 +23,13 @@ export const config = {
   terraformBin: process.env.GRID_TERRAFORM_BIN || 'terraform',
   /** When true, API-triggered applies use -auto-approve */
   autoApprove: process.env.GRID_AUTO_APPROVE !== 'false',
+  /** Optional bootstrap GitOps repo (installer can also set via API) */
+  gitops: {
+    repoUrl: process.env.GRID_GITOPS_REPO_URL || '',
+    branch: process.env.GRID_GITOPS_BRANCH || 'main',
+    pathPrefix: process.env.GRID_GITOPS_PATH || 'infrastructures',
+    syncIntervalSec: Number(process.env.GRID_GITOPS_SYNC_INTERVAL_SEC || 0),
+  },
   demoUser: {
     id: 'user-demo',
     email: 'demo@gridplatform.org',

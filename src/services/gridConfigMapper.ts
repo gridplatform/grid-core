@@ -43,11 +43,15 @@ function toDisplayProvider(providerId: string): CloudProviderType {
   return 'On-Prem';
 }
 
-function toCliEnvironment(environment: string): 'dev' | 'staging' | 'prod' {
+/** Normalize UI/API env labels to CLI metadata.environment values. */
+function toCliEnvironment(
+  environment: string
+): 'development' | 'sandbox' | 'staging' | 'production' {
   const e = environment.toLowerCase();
-  if (e === 'prod' || e === 'production') return 'prod';
+  if (e === 'prod' || e === 'production') return 'production';
   if (e === 'staging' || e === 'stage') return 'staging';
-  return 'dev';
+  if (e === 'sandbox') return 'sandbox';
+  return 'development'; // includes 'dev' | 'development' | unknown
 }
 
 function slug(name: string): string {

@@ -1,0 +1,24 @@
+{
+  "provider": "aws",
+  "project": "grid-gitops-demo",
+  "region": "ap-south-1",
+  "metadata": {
+    "name": "demo-vpc",
+    "environment": "development"
+  },
+  "resources": [
+    {
+      "type": "vpc",
+      "name": "demo-vpc",
+      "cidr": "10.50.0.0/16",
+      "description": "GitOps demo VPC"
+    },
+    {
+      "type": "subnet",
+      "name": "demo-subnet",
+      "vpc": "demo-vpc",
+      "cidr": "10.50.1.0/24",
+      "region": "ap-south-1"
+    }
+  ]
+}

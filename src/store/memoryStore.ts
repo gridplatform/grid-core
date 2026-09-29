@@ -51,11 +51,12 @@ export async function saveInfrastructure(infra: Infrastructure): Promise<Infrast
 export async function createInfrastructure(
   input: Omit<Infrastructure, 'id' | 'createdAt' | 'updatedAt' | 'userId'> & {
     userId?: string;
+    id?: string;
   }
 ): Promise<Infrastructure> {
   const now = new Date().toISOString();
   const infra: Infrastructure = {
-    id: uuid(),
+    id: input.id || uuid(),
     userId: input.userId || config.demoUser.id,
     name: input.name,
     environment: input.environment,
@@ -63,6 +64,10 @@ export async function createInfrastructure(
     configJson: input.configJson,
     gitRepo: input.gitRepo,
     gitBranch: input.gitBranch,
+    gitPath: input.gitPath,
+    gitCommit: input.gitCommit,
+    gitContentHash: input.gitContentHash,
+    lastAppliedHash: input.lastAppliedHash,
     status: input.status || 'pending',
     autoApprove: input.autoApprove ?? true,
     driftDetection: input.driftDetection ?? false,
@@ -103,12 +108,14 @@ export async function createDeployment(
     resourceType?: string;
     provider?: string;
     environment?: string;
+    mode?: import('../types/api').LifecycleMode;
   }
 ): Promise<Deployment> {
   const deployment: Deployment = {
     id: uuid(),
     infrastructureId,
     status: 'pending',
+    mode: meta?.mode,
     progress: 0,
     startedAt: new Date().toISOString(),
     logs: [],
@@ -126,8 +133,19 @@ export async function appendDeploymentLog(
   deploymentId: string,
   line: string
 ): Promise<void> {
-  const deployment = await getDeployment(deploymentId);
-  if (!deployment) return;
-  deployment.logs.push(line);
-  await saveDeployment(deployment);
+  // Serialize appends per deployment so concurrent stdout/stderr chunks don't drop lines
+  const prev = appendChains.get(deploymentId) ?? Promise.resolve();
+  const next = prev
+    .then(async () => {
+      const deployment = await getDeployment(deploymentId);
+      if (!deployment) return;
+      deployment.logs.push(line);
+      await saveDeployment(deployment);
+    })
+    .catch(() => undefined);
+  appendChains.set(deploymentId, next);
+  await next;
 }
+
+const appendChains = new Map<string, Promise<void | undefined>>();
+

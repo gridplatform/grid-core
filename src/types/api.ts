@@ -4,8 +4,23 @@
  */
 
 export type HealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
-export type ResourceStatus = 'running' | 'stopped' | 'error' | 'degraded' | 'pending';
-export type DeploymentStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+export type ResourceStatus =
+  | 'running'
+  | 'stopped'
+  | 'error'
+  | 'degraded'
+  | 'pending'
+  | 'destroyed'
+  /** Desired-state JSON removed from Git; awaiting explicit destroy confirmation */
+  | 'stale';
+export type DeploymentStatus =
+  | 'pending'
+  | 'planning'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'cancelled';
+export type LifecycleMode = 'plan' | 'apply' | 'destroy';
 export type CloudProviderType = 'AWS' | 'GCP' | 'Azure' | 'On-Prem';
 
 export type InfrastructureType =
@@ -32,6 +47,14 @@ export interface Infrastructure {
   configJson: Record<string, unknown>;
   gitRepo?: string;
   gitBranch?: string;
+  /** Path of desired-state file in the GitOps repo */
+  gitPath?: string;
+  /** SHA of last synced commit for this file */
+  gitCommit?: string;
+  /** Hash of configJson last synced from Git */
+  gitContentHash?: string;
+  /** Hash of configJson last successfully applied */
+  lastAppliedHash?: string;
   status: ResourceStatus;
   autoApprove: boolean;
   driftDetection: boolean;
@@ -59,10 +82,14 @@ export interface Deployment {
   id: string;
   infrastructureId: string;
   status: DeploymentStatus;
+  /** Desired-state lifecycle step for this run */
+  mode?: LifecycleMode;
   progress?: number;
   startedAt: string;
   completedAt?: string;
   logs: string[];
+  /** Human-readable terraform plan output / summary */
+  planSummary?: string;
   triggeredBy: string;
   gitCommit?: string;
   gitBranch?: string;
