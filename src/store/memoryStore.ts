@@ -11,6 +11,9 @@ interface StoreShape {
 
 const STORE_FILE = () => path.join(config.dataDir, 'store.json');
 
+/** In-memory copy of store.json — avoids re-parsing multi-MB JSON on every list call. */
+let memoryStore: StoreShape | null = null;
+
 /** Serialize all store reads/writes — sync fans out many saves and raced on one tmp path. */
 let storeChain: Promise<unknown> = Promise.resolve();
 
@@ -24,26 +27,31 @@ function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function readStoreUnlocked(): Promise<StoreShape> {
+  if (memoryStore) return memoryStore;
+
   await fs.ensureDir(config.dataDir);
   const file = STORE_FILE();
   const empty: StoreShape = { infrastructures: [], deployments: [] };
 
   if (!(await fs.pathExists(file))) {
-    await fs.writeJSON(file, empty, { spaces: 2 });
-    return empty;
+    await fs.writeJSON(file, empty);
+    memoryStore = empty;
+    return memoryStore;
   }
 
   try {
     const raw = await fs.readFile(file, 'utf8');
     if (!raw.trim()) {
-      await fs.writeJSON(file, empty, { spaces: 2 });
-      return empty;
+      await fs.writeJSON(file, empty);
+      memoryStore = empty;
+      return memoryStore;
     }
     const parsed = JSON.parse(raw) as Partial<StoreShape>;
-    return {
+    memoryStore = {
       infrastructures: Array.isArray(parsed.infrastructures) ? parsed.infrastructures : [],
       deployments: Array.isArray(parsed.deployments) ? parsed.deployments : [],
     };
+    return memoryStore;
   } catch {
     const bak = `${file}.corrupt.${Date.now()}`;
     try {
@@ -55,8 +63,9 @@ async function readStoreUnlocked(): Promise<StoreShape> {
         /* ignore */
       }
     }
-    await fs.writeJSON(file, empty, { spaces: 2 });
-    return empty;
+    await fs.writeJSON(file, empty);
+    memoryStore = empty;
+    return memoryStore;
   }
 }
 
@@ -64,8 +73,10 @@ async function writeStoreUnlocked(store: StoreShape): Promise<void> {
   await fs.ensureDir(config.dataDir);
   const file = STORE_FILE();
   const tmp = `${file}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-  await fs.writeJSON(tmp, store, { spaces: 2 });
+  // Compact JSON keeps large catalogs smaller on disk and faster to rewrite.
+  await fs.writeJSON(tmp, store);
   await fs.move(tmp, file, { overwrite: true });
+  memoryStore = store;
 }
 
 async function readStore(): Promise<StoreShape> {

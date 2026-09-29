@@ -1,13 +1,24 @@
 import fs from 'fs-extra';
 import { createApp } from './app';
 import { config } from './config';
+import { ensureBootstrapAdmin } from './auth/authService';
 import { loadGitOpsSettings } from './store/gitopsStore';
+import {
+  effectiveGitOpsSyncIntervalSec,
+  startGitOpsAutoSync,
+} from './services/gitopsAutoSync';
 import { syncGitOpsRepo } from './services/gitopsSyncService';
 
 async function main() {
   await fs.ensureDir(config.dataDir);
   await fs.ensureDir(config.workDir);
   await fs.ensureDir(config.configRoot);
+
+  if (!config.auth.disabled) {
+    await ensureBootstrapAdmin();
+  } else {
+    console.warn('[auth] GRID_AUTH_DISABLED — API is open; demo user is used for audit fields.');
+  }
 
   const app = createApp();
   app.listen(config.port, () => {
@@ -40,15 +51,8 @@ async function main() {
     } catch (err) {
       console.error('[gitops] initial sync failed', err instanceof Error ? err.message : err);
     }
-    if (settings.syncIntervalSec > 0) {
-      const ms = settings.syncIntervalSec * 1000;
-      console.log(`GitOps auto-sync every ${settings.syncIntervalSec}s`);
-      setInterval(() => {
-        void syncGitOpsRepo().catch((err) =>
-          console.error('[gitops] sync failed', err instanceof Error ? err.message : err)
-        );
-      }, ms);
-    }
+    const intervalSec = effectiveGitOpsSyncIntervalSec(settings);
+    startGitOpsAutoSync(intervalSec);
   }
 
   // Populate infra store in the background so /projects stays snappy.

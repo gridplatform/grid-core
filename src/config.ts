@@ -74,7 +74,11 @@ export const config = {
     repoUrl: process.env.GRID_GITOPS_REPO_URL || '',
     branch: process.env.GRID_GITOPS_BRANCH || 'main',
     pathPrefix: process.env.GRID_GITOPS_PATH || '',
-    syncIntervalSec: Number(process.env.GRID_GITOPS_SYNC_INTERVAL_SEC || 0),
+    /** Auto Git pull + reconcile; 0 = off. Default 10m when a remote repo URL is set. */
+    syncIntervalSec: Number(
+      process.env.GRID_GITOPS_SYNC_INTERVAL_SEC ??
+        (process.env.GRID_GITOPS_REPO_URL ? '600' : '0')
+    ),
   },
   demoUser: {
     id: 'user-demo',
@@ -82,6 +86,24 @@ export const config = {
     name: 'Grid Demo',
     role: 'admin' as const,
     createdAt: new Date().toISOString(),
+  },
+  /**
+   * Internal user database (JSON under GRID_DATA_DIR/users.json).
+   * Jenkins-style: local accounts + API session tokens; OIDC/SSO later.
+   */
+  auth: {
+    disabled:
+      process.env.GRID_AUTH_DISABLED === '1' ||
+      process.env.GRID_AUTH_DISABLED === 'true',
+    allowRegister:
+      process.env.GRID_AUTH_ALLOW_REGISTER === '1' ||
+      process.env.GRID_AUTH_ALLOW_REGISTER === 'true',
+    sessionTtlHours: Number(process.env.GRID_AUTH_SESSION_TTL_HOURS || 168),
+    bootstrap: {
+      email: process.env.GRID_AUTH_ADMIN_EMAIL || '',
+      password: process.env.GRID_AUTH_ADMIN_PASSWORD || '',
+      name: process.env.GRID_AUTH_ADMIN_NAME || '',
+    },
   },
 };
 

@@ -182,14 +182,48 @@ async function countUnitsUnder(dir: string): Promise<number> {
 
 type DiscoveredUnit = { project: string; cloud: string; env: string; abs: string; gitPath: string };
 
+/** How long a directory walk stays reusable for /projects and /environments. */
+const DISCOVERY_TTL_MS = 30_000;
+
+let discoveryCache: { root: string; at: number; units: DiscoveredUnit[] } | null = null;
+let discoveryInFlight: Promise<DiscoveredUnit[]> | null = null;
+
+/** Drop the discovery cache (call after GitOps or config-root sync). */
+export function invalidateConfigDiscoveryCache(): void {
+  discoveryCache = null;
+}
+
 /**
  * Walk GRID_CONFIG_ROOT and discover intent JSON units.
  * Layout: projects/<project>/{cloud}/{env}/…/*.json
  *
- * Uses path + filename heuristics (no per-file JSON parse) so large catalogs stay fast.
- * Full parse happens later when syncing a unit into the store.
+ * Uses path + filename heuristics (no per-file JSON parse).
+ * Results are cached briefly so repeated console requests share one walk.
  */
 async function discoverUnits(root: string): Promise<DiscoveredUnit[]> {
+  const now = Date.now();
+  if (
+    discoveryCache &&
+    discoveryCache.root === root &&
+    now - discoveryCache.at < DISCOVERY_TTL_MS
+  ) {
+    return discoveryCache.units;
+  }
+  if (discoveryInFlight) return discoveryInFlight;
+
+  discoveryInFlight = discoverUnitsUncached(root)
+    .then((units) => {
+      discoveryCache = { root, at: Date.now(), units };
+      return units;
+    })
+    .finally(() => {
+      discoveryInFlight = null;
+    });
+
+  return discoveryInFlight;
+}
+
+async function discoverUnitsUncached(root: string): Promise<DiscoveredUnit[]> {
   const found: DiscoveredUnit[] = [];
   if (!(await fs.pathExists(root))) return found;
 

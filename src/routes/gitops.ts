@@ -5,7 +5,10 @@ import {
   loadGitOpsSettings,
   saveGitOpsSettings,
 } from '../store/gitopsStore';
-import { syncGitOpsRepo } from '../services/gitopsSyncService';
+import {
+  GitOpsSyncInProgressError,
+  syncGitOpsRepo,
+} from '../services/gitopsSyncService';
 import { checkInfrastructureDrift } from '../services/driftService';
 import { getInfrastructure, listInfrastructures } from '../store/memoryStore';
 import type { GitOpsSettings } from '../types/gitops';
@@ -65,9 +68,16 @@ router.put('/gitops/settings', async (req, res) => {
 
 router.post('/gitops/sync', async (_req, res) => {
   try {
-    const result = await syncGitOpsRepo();
+    const result = await syncGitOpsRepo({ ifBusy: 'fail' });
     res.json(result);
   } catch (err) {
+    if (err instanceof GitOpsSyncInProgressError) {
+      res.status(409).json({
+        code: 'gitops_sync_in_progress',
+        message: err.message,
+      });
+      return;
+    }
     res.status(400).json({
       code: 'gitops_sync_error',
       message: err instanceof Error ? err.message : String(err),

@@ -33,6 +33,8 @@ import type {
   InfrastructureListItem,
   LifecycleMode,
 } from '../types/api';
+import { getActorEmail } from '../middleware/requireAuth';
+import { resolveResourceType } from '../services/resourceType';
 
 const router = Router();
 
@@ -66,28 +68,33 @@ const CreateDeploymentSchema = z.object({
 
 function toListItem(infra: Awaited<ReturnType<typeof getInfrastructure>>): InfrastructureListItem | null {
   if (!infra) return null;
-  const cfg = infra.configJson as { region?: string; provider?: string };
+  const cfg = infra.configJson as { region?: string; provider?: string } | undefined;
   return {
     id: infra.id,
     name: infra.name,
-    type: 'single-vm',
+    type: resolveResourceType({
+      configJson: infra.configJson,
+      gitPath: infra.gitPath,
+      name: infra.name,
+    }),
     status: infra.status,
-    region: cfg.region || 'ap-south-1',
+    region: (cfg && typeof cfg.region === 'string' && cfg.region) || 'ap-south-1',
     environment: infra.environment,
     provider: infra.provider,
     project: infra.project,
     connections: [],
-    config: infra.configJson,
+    // List responses stay lightweight; full configJson is on GET /infrastructures/:id.
   };
 }
 
 async function startLifecycle(
   infra: Infrastructure,
   mode: LifecycleMode,
+  triggeredBy: string,
   meta?: { name?: string; engine?: string; resourceType?: string; provider?: string; environment?: string }
 ) {
   await cancelActiveDeploymentsForInfrastructure(infra.id);
-  const deployment = await createDeployment(infra.id, config.demoUser.email, {
+  const deployment = await createDeployment(infra.id, triggeredBy, {
     name: meta?.name || infra.name,
     engine: meta?.engine || 'terraform',
     resourceType: meta?.resourceType,
@@ -103,31 +110,7 @@ router.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'grid-core' });
 });
 
-router.get('/auth/me', (_req, res) => {
-  res.json(config.demoUser);
-});
-
-router.post('/auth/login', (_req, res) => {
-  res.json({
-    token: 'demo-token',
-    user: config.demoUser,
-    expiresAt: new Date(Date.now() + 86400000).toISOString(),
-  });
-});
-
-router.post('/auth/register', (_req, res) => {
-  res.status(501).json({ code: 'not_implemented', message: 'Register not enabled in demo' });
-});
-
-router.post('/auth/refresh', (_req, res) => {
-  res.json({ token: 'demo-token', expiresAt: new Date(Date.now() + 86400000).toISOString() });
-});
-
-router.post('/auth/logout', (_req, res) => {
-  res.status(204).end();
-});
-
-router.get('/infrastructures', async (_req, res) => {
+router.get('/infrastructures', async (req, res) => {
   const existing = await listInfrastructures();
   if (existing.length === 0) {
     // First load — must populate from desired-state tree.
@@ -136,11 +119,26 @@ router.get('/infrastructures', async (_req, res) => {
     // Refresh in background when TTL allows; do not block the UI.
     void syncInfrastructuresFromConfigRoot();
   }
+
+  const project =
+    typeof req.query.project === 'string' && req.query.project.trim()
+      ? req.query.project.trim()
+      : undefined;
+  const environment =
+    typeof req.query.environment === 'string' && req.query.environment.trim()
+      ? req.query.environment.trim()
+      : undefined;
+
   const items = await listInfrastructures();
   // Config-backed units + stale (removed from config, still in state). Never list destroyed orphans.
   res.json(
     items
       .filter((i) => i.status !== 'destroyed')
+      .filter((i) => {
+        if (project && (i.project || 'demo-app') !== project) return false;
+        if (environment && i.environment !== environment) return false;
+        return true;
+      })
       .map((i) => toListItem(i))
       .filter(Boolean)
   );
@@ -178,7 +176,11 @@ router.post('/infrastructures', async (req, res) => {
   const shouldPlan = req.query.plan === 'true' || req.query.plan === '1';
 
   if (shouldApply || shouldPlan) {
-    const deployment = await startLifecycle(infra, shouldApply ? 'apply' : 'plan');
+    const deployment = await startLifecycle(
+      infra,
+      shouldApply ? 'apply' : 'plan',
+      getActorEmail(req)
+    );
     res.status(201).json({ infrastructure: infra, deployment });
     return;
   }
@@ -224,7 +226,7 @@ router.post('/infrastructures/:id/plan', async (req, res) => {
     res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
     return;
   }
-  const deployment = await startLifecycle(infra, 'plan');
+  const deployment = await startLifecycle(infra, 'plan', getActorEmail(req));
   res.status(202).json(deployment);
 });
 
@@ -238,7 +240,7 @@ router.post('/infrastructures/:id/apply', async (req, res) => {
     res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
     return;
   }
-  const deployment = await startLifecycle(infra, 'apply');
+  const deployment = await startLifecycle(infra, 'apply', getActorEmail(req));
   res.status(202).json(deployment);
 });
 
@@ -252,7 +254,7 @@ router.post('/infrastructures/:id/destroy', async (req, res) => {
     res.status(409).json({ code: 'destroyed', message: 'Already destroyed' });
     return;
   }
-  const deployment = await startLifecycle(infra, 'destroy');
+  const deployment = await startLifecycle(infra, 'destroy', getActorEmail(req));
   res.status(202).json(deployment);
 });
 
@@ -291,7 +293,7 @@ router.post('/infrastructures/:id/deploy', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  const deployment = await startLifecycle(infra, 'apply');
+  const deployment = await startLifecycle(infra, 'apply', getActorEmail(req));
   res.status(202).json(deployment);
 });
 
@@ -338,7 +340,7 @@ router.delete('/infrastructures/:id', async (req, res) => {
     res.status(204).end();
     return;
   }
-  const deployment = await startLifecycle(infra, 'destroy');
+  const deployment = await startLifecycle(infra, 'destroy', getActorEmail(req));
   res.status(202).json(deployment);
 });
 
@@ -405,7 +407,7 @@ router.post('/deployments', async (req, res) => {
   }
 
   const mode: LifecycleMode = body.mode;
-  const deployment = await startLifecycle(infra, mode, {
+  const deployment = await startLifecycle(infra, mode, getActorEmail(req), {
     name: body.name,
     engine: body.engine,
     resourceType: body.resourceType,
@@ -553,7 +555,7 @@ router.post('/deployments/:id/retry', async (req, res) => {
     return;
   }
   const mode: LifecycleMode = d.mode === 'plan' || d.mode === 'destroy' ? d.mode : 'apply';
-  const next = await startLifecycle(infra, mode, {
+  const next = await startLifecycle(infra, mode, getActorEmail(req), {
     name: d.name || infra.name,
     engine: d.engine || 'terraform',
     resourceType: d.resourceType,
@@ -632,7 +634,7 @@ router.post('/releases', async (req, res) => {
   try {
     const release = await enqueueRelease({
       ...parsed.data,
-      createdBy: config.demoUser.email,
+      createdBy: getActorEmail(req),
     });
     res.status(201).json(release);
   } catch (err) {
