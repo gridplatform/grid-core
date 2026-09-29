@@ -74,3 +74,7 @@ export function getActorEmail(req: Request): string {
 export function getActorId(req: Request): string {
   return req.gridUser?.id ?? config.demoUser.id;
 }
+
+export function getActorRole(req: Request): User['role'] | undefined {
+  return req.gridUser?.role ?? config.demoUser.role;
+}
