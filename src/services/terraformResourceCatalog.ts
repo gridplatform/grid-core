@@ -1,6 +1,6 @@
 /**
- * Families group resource types for display and mapper composers.
- * Console on/off for deploys lives only in grid-ui featureFlags.ts — not here.
+ * Resource-type families for display and mapper composers.
+ * Deploy visibility is UI-only (grid-ui featureFlags).
  */
 export type TerraformFamily =
   | 'compute'
@@ -19,7 +19,7 @@ export type TerraformFamily =
   | 'cicd'
   | 'observability-infra';
 
-/** Catalog-aligned resource types Grid can accept on deploy requests. */
+/** Resource types accepted on deploy requests. */
 export const TERRAFORM_RESOURCE_TYPES: Record<TerraformFamily, string[]> = {
   compute: [
     'vm',
@@ -238,13 +238,8 @@ export function familyForResourceType(resourceType: string): TerraformFamily | n
 }
 
 /**
- * Types with a first-class composer in the CLI: the mapper expands them into a
- * network graph (VPC + subnets, or VPC + subnet + VM) so a single request yields
- * a working topology.
- *
- * Every other catalogued type generates through the CLI's generic catalog path,
- * where the request config is forwarded to the module bank as Terraform
- * variables. Membership here is about request shape, not about support.
+ * Composer types: mapper expands into VPC/subnet/(VM) topology.
+ * Other catalog types use generic module-var passthrough.
  */
 export const NETWORK_COMPOSER_TYPES = new Set(['vpc', 'network', 'subnet']);
 

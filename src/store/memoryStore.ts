@@ -133,7 +133,7 @@ export async function appendDeploymentLog(
   deploymentId: string,
   line: string
 ): Promise<void> {
-  // Serialize appends per deployment so concurrent stdout/stderr chunks don't drop lines
+  // Serialize appends so concurrent stdout/stderr chunks don't drop lines
   const prev = appendChains.get(deploymentId) ?? Promise.resolve();
   const next = prev
     .then(async () => {

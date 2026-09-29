@@ -23,7 +23,7 @@ async function main() {
     }
   });
 
-  // Optional background GitOps sync
+  // Optional GitOps poll loop
   const settings = await loadGitOpsSettings();
   if (settings?.enabled && settings.syncIntervalSec > 0 && settings.repoUrl) {
     const ms = settings.syncIntervalSec * 1000;

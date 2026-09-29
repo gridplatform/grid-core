@@ -3,8 +3,7 @@
 ## Desired-state for local testing
 
 **Use `../demo-infra`** (sibling of `grid-core`). That is the default
-`GRID_CONFIG_ROOT` owned by Core — not `grid-config`, and not this folder’s
-GitOps layout sketch alone.
+`GRID_CONFIG_ROOT` owned by Core.
 
 ```text
 ../demo-infra/
@@ -23,7 +22,7 @@ Examples:
 - `gcp/development/vpc/dev-demo-vpc.json`
 - `gcp/development/vm/dev-demo-app.json`
 
-Ephemeral copies of an env (TTL, no sandbox): `grid env clone development --name try-x --ttl 24h`
+Ephemeral copies of an env (TTL): `grid env clone development --name try-x --ttl 24h`
 
 | Env | Default (from grid-core) |
 |-----|--------------------------|
@@ -31,7 +30,8 @@ Ephemeral copies of an env (TTL, no sandbox): `grid env clone development --name
 | `GRID_MODULE_BANK` | `../grid-terraform` |
 | `GRID_CLI_ROOT` | `../grid-cli` |
 
-## GitOps layout sketch only
+## Legacy layout sketch
 
-`examples/gitops-repo/` shows a sync path shape (`infrastructures/<name>/grid.json`).
-Copy real stacks from `demo-infra` when you need product env content.
+`examples/gitops-repo/` is a legacy sync-path sketch
+(`infrastructures/<name>/grid.json`). Prefer the
+`<cloud>/<env>/<type>/<name>.json` + `archive/` layout from `demo-infra`.

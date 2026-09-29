@@ -1,7 +1,9 @@
 # Infrastructure desired-state lifecycle (smoke)
 
-One infrastructure id owns one desired-state JSON and one Terraform workspace
-under `grid-core/workspaces/<id>/`.
+One infrastructure id owns one desired-state JSON. Terraform runs from:
+
+- **GitOps / gitPath units:** `GRID_CONFIG_ROOT/archive/<cloud>/<env>/<type>/<name>/`
+- **API-only units (no gitPath):** `grid-core/workspaces/<id>/generated/`
 
 ## Flow
 

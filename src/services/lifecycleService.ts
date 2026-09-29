@@ -95,8 +95,7 @@ async function generateTerraform(
   const cliEntryTs = path.join(config.cliRoot, 'src', 'index.ts');
   const useCompiled = await fs.pathExists(cliEntryJs);
 
-  // Archive mode: omit --output so CLI writes instance TF under <configRoot>/archive/…
-  // (JSON change → rewrite archive main.tf etc.; module bank never modified).
+  // Archive mode: omit --output; CLI writes under configRoot/archive/
   const args = ['generate', '--config', configPath, '--format', 'terraform'];
   if (opts?.writeArchive && opts.configDir) {
     args.push('--config-dir', opts.configDir);
@@ -117,10 +116,7 @@ async function generateTerraform(
   );
 }
 
-/**
- * Prefer Git desired-state path → archive/ instance Terraform.
- * Fallback: local workDir workspace (API-only units without gitPath).
- */
+/** Resolve Terraform dirs: gitPath → archive/; else workDir/<id>/generated. */
 function resolveTerraformDirs(infra: Infrastructure): {
   configPath: string;
   terraformDir: string;
@@ -166,11 +162,8 @@ function failDeployment(
 }
 
 /**
- * Desired-state lifecycle: regenerate instance Terraform from configJson, then plan/apply/destroy.
- *
- * When infra.gitPath is set (GitOps / demo-infra / customer repo):
- *   writes <GRID_CONFIG_ROOT>/archive/<same-path>/  (instance HCL from JSON)
- * Otherwise falls back to workDir/<id>/generated.
+ * Regenerate instance Terraform from configJson, then plan/apply/destroy.
+ * gitPath units write under GRID_CONFIG_ROOT/archive/; else workDir.
  */
 export async function runLifecycle(
   infra: Infrastructure,
@@ -197,7 +190,7 @@ export async function runLifecycle(
     `[grid] terraformDir=${generatedDir} mode=${mode} archive=${resolved.writeArchive}`
   );
 
-  // Always regenerate instance TF from current JSON before plan/apply/destroy.
+  // Regenerate instance TF from current JSON before plan/apply/destroy.
   await log('[grid] regenerating instance Terraform from JSON (module bank unchanged)...');
   const genCode = await generateTerraform(resolved.configPath, generatedDir, log, {
     configDir: resolved.configDir,
@@ -242,7 +235,7 @@ export async function runLifecycle(
 
     deployment.planSummary = planResult.stdout.slice(0, 50_000);
 
-    // Best-effort JSON summary for UI
+    // Best-effort plan JSON summary for UI
     const show = await captureCommand(
       config.terraformBin,
       ['show', '-json', 'tfplan'],
@@ -309,7 +302,7 @@ export async function runLifecycle(
     return;
   }
 
-  // apply — always refresh plan file then apply it
+  // apply: refresh tfplan then apply it
   await log('[terraform] plan');
   const planCode = await runCommand(
     config.terraformBin,
