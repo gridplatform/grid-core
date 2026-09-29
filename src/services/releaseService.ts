@@ -132,7 +132,12 @@ async function executeRelease(releaseId: string): Promise<void> {
       return;
     }
 
-    const mode = release.mode as 'plan' | 'apply';
+    if (release.mode !== 'plan' && release.mode !== 'apply' && release.mode !== 'destroy') {
+      await finishRelease(release, false, `Unsupported release mode: ${release.mode}`);
+      return;
+    }
+
+    const mode = release.mode;
     const deployment = await createDeployment(infra.id, release.createdBy, {
       name: release.name,
       engine: 'terraform',
@@ -199,7 +204,7 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
   if (input.mode === 'custom') {
     parseGridCliCommand(input.customCommand || '');
   } else if (!input.infrastructureId) {
-    throw new Error('Select an infrastructure unit for plan/apply releases');
+    throw new Error('Select an infrastructure unit for plan/apply/destroy releases');
   }
 
   let infrastructureName: string | undefined;

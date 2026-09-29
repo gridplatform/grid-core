@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
 import {
@@ -83,7 +83,8 @@ function toListItem(infra: Awaited<ReturnType<typeof getInfrastructure>>): Infra
     provider: infra.provider,
     project: infra.project,
     connections: [],
-    // List responses stay lightweight; full configJson is on GET /infrastructures/:id.
+    gitPath: infra.gitPath,
+    // Full configJson stays on GET /infrastructures/:id.
   };
 }
 
@@ -217,46 +218,57 @@ router.patch('/infrastructures/:id', async (req, res) => {
 });
 
 router.post('/infrastructures/:id/plan', async (req, res) => {
-  const infra = await getInfrastructure(req.params.id);
-  if (!infra) {
-    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
-    return;
-  }
-  if (infra.status === 'destroyed') {
-    res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
-    return;
-  }
-  const deployment = await startLifecycle(infra, 'plan', getActorEmail(req));
-  res.status(202).json(deployment);
+  await enqueueInfrastructureRelease(req, res, 'plan');
 });
 
 router.post('/infrastructures/:id/apply', async (req, res) => {
-  const infra = await getInfrastructure(req.params.id);
-  if (!infra) {
-    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
-    return;
-  }
-  if (infra.status === 'destroyed') {
-    res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
-    return;
-  }
-  const deployment = await startLifecycle(infra, 'apply', getActorEmail(req));
-  res.status(202).json(deployment);
+  await enqueueInfrastructureRelease(req, res, 'apply');
 });
 
 router.post('/infrastructures/:id/destroy', async (req, res) => {
+  await enqueueInfrastructureRelease(req, res, 'destroy');
+});
+
+async function enqueueInfrastructureRelease(
+  req: Request,
+  res: Response,
+  mode: 'plan' | 'apply' | 'destroy'
+) {
   const infra = await getInfrastructure(req.params.id);
   if (!infra) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
   if (infra.status === 'destroyed') {
-    res.status(409).json({ code: 'destroyed', message: 'Already destroyed' });
+    res.status(409).json({
+      code: 'destroyed',
+      message: mode === 'destroy' ? 'Already destroyed' : 'Infrastructure was destroyed',
+    });
     return;
   }
-  const deployment = await startLifecycle(infra, 'destroy', getActorEmail(req));
-  res.status(202).json(deployment);
-});
+  if (mode === 'destroy' && req.gridUser?.role !== 'admin') {
+    res.status(403).json({
+      code: 'forbidden',
+      message: 'Only admins can destroy infrastructure',
+    });
+    return;
+  }
+  try {
+    const release = await enqueueRelease({
+      name: `${infra.name} (${mode})`,
+      environment: infra.environment,
+      mode,
+      infrastructureId: infra.id,
+      createdBy: getActorEmail(req),
+    });
+    res.status(201).json(release);
+  } catch (err) {
+    res.status(400).json({
+      code: 'release_error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 /**
  * Restore a stale unit: write configJson back to gitPath under GRID_CONFIG_ROOT.
@@ -607,7 +619,7 @@ const empty = (_req: unknown, res: { json: (b: unknown) => void }) => res.json([
 const CreateReleaseSchema = z.object({
   name: z.string().min(1).optional(),
   environment: z.string().min(1),
-  mode: z.enum(['plan', 'apply', 'custom']),
+  mode: z.enum(['plan', 'apply', 'destroy', 'custom']),
   infrastructureId: z.string().uuid().optional(),
   customCommand: z.string().optional(),
 });
@@ -629,6 +641,13 @@ router.post('/releases', async (req, res) => {
   const parsed = CreateReleaseSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ code: 'validation_error', message: parsed.error.message });
+    return;
+  }
+  if (parsed.data.mode === 'destroy' && req.gridUser?.role !== 'admin') {
+    res.status(403).json({
+      code: 'forbidden',
+      message: 'Only admins can create destroy releases',
+    });
     return;
   }
   try {
