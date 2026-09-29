@@ -13,6 +13,9 @@ const cwd = process.cwd();
  * Grid Core owns platform paths. The CLI is an add-on: when Core spawns it,
  * these values are injected as env (see cliChildEnv). Do not hardcode
  * grid-config / module-bank locations in the CLI as product SoT.
+ *
+ * GRID_CONFIG_ROOT is the single desired-state working tree for local demos
+ * and remote GitHub checkouts — intent JSON + archive/ always live there.
  */
 export const config = {
   port: Number(process.env.PORT || 3000),
@@ -54,7 +57,7 @@ export const config = {
   gitops: {
     repoUrl: process.env.GRID_GITOPS_REPO_URL || '',
     branch: process.env.GRID_GITOPS_BRANCH || 'main',
-    pathPrefix: process.env.GRID_GITOPS_PATH || 'infrastructures',
+    pathPrefix: process.env.GRID_GITOPS_PATH || '',
     syncIntervalSec: Number(process.env.GRID_GITOPS_SYNC_INTERVAL_SEC || 0),
   },
   demoUser: {

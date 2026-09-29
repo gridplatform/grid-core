@@ -88,27 +88,64 @@ async function captureCommand(
 async function generateTerraform(
   configPath: string,
   generatedDir: string,
-  log: (line: string) => Promise<void>
+  log: (line: string) => Promise<void>,
+  opts?: { configDir?: string; writeArchive?: boolean }
 ): Promise<number> {
   const cliEntryJs = path.join(config.cliRoot, 'dist', 'index.js');
   const cliEntryTs = path.join(config.cliRoot, 'src', 'index.ts');
   const useCompiled = await fs.pathExists(cliEntryJs);
 
+  // Archive mode: omit --output so CLI writes instance TF under <configRoot>/archive/…
+  // (JSON change → rewrite archive main.tf etc.; module bank never modified).
+  const args = ['generate', '--config', configPath, '--format', 'terraform'];
+  if (opts?.writeArchive && opts.configDir) {
+    args.push('--config-dir', opts.configDir);
+  } else {
+    args.push('--output', generatedDir);
+    if (opts?.configDir) args.push('--config-dir', opts.configDir);
+  }
+
   if (useCompiled) {
-    return runCommand(
-      process.execPath,
-      [cliEntryJs, 'generate', '--config', configPath, '--output', generatedDir, '--format', 'terraform'],
-      config.cliRoot,
-      log
-    );
+    return runCommand(process.execPath, [cliEntryJs, ...args], config.cliRoot, log);
   }
 
   return runCommand(
     path.join(config.cliRoot, 'node_modules', '.bin', 'tsx'),
-    [cliEntryTs, 'generate', '--config', configPath, '--output', generatedDir, '--format', 'terraform'],
+    [cliEntryTs, ...args],
     config.cliRoot,
     log
   );
+}
+
+/**
+ * Prefer Git desired-state path → archive/ instance Terraform.
+ * Fallback: local workDir workspace (API-only units without gitPath).
+ */
+function resolveTerraformDirs(infra: Infrastructure): {
+  configPath: string;
+  terraformDir: string;
+  writeArchive: boolean;
+  configDir?: string;
+} {
+  const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')) {
+    const configPath = path.join(config.configRoot, gitPath);
+    const unitRel = gitPath.replace(/\.json$/i, '');
+    const terraformDir = path.join(config.configRoot, 'archive', unitRel);
+    return {
+      configPath,
+      terraformDir,
+      writeArchive: true,
+      configDir: config.configRoot,
+    };
+  }
+
+  const workspace = path.join(config.workDir, infra.id);
+  return {
+    configPath: path.join(workspace, 'grid.json'),
+    terraformDir: path.join(workspace, 'generated'),
+    writeArchive: false,
+  };
 }
 
 function failDeployment(
@@ -129,22 +166,23 @@ function failDeployment(
 }
 
 /**
- * Desired-state lifecycle: generate from configJson, then plan / apply / destroy.
- * One infrastructure id ↔ one workspace under workDir/<id>/.
+ * Desired-state lifecycle: regenerate instance Terraform from configJson, then plan/apply/destroy.
+ *
+ * When infra.gitPath is set (GitOps / demo-infra / customer repo):
+ *   writes <GRID_CONFIG_ROOT>/archive/<same-path>/  (instance HCL from JSON)
+ * Otherwise falls back to workDir/<id>/generated.
  */
 export async function runLifecycle(
   infra: Infrastructure,
   deployment: Deployment,
   mode: LifecycleMode
 ): Promise<void> {
-  const workspace = path.join(config.workDir, infra.id);
-  await fs.ensureDir(workspace);
+  const resolved = resolveTerraformDirs(infra);
+  await fs.ensureDir(path.dirname(resolved.configPath));
+  await fs.writeJSON(resolved.configPath, infra.configJson, { spaces: 2 });
+  await fs.ensureDir(resolved.terraformDir);
 
-  const configPath = path.join(workspace, 'grid.json');
-  await fs.writeJSON(configPath, infra.configJson, { spaces: 2 });
-
-  const generatedDir = path.join(workspace, 'generated');
-  await fs.ensureDir(generatedDir);
+  const generatedDir = resolved.terraformDir;
 
   const log = async (line: string) => {
     await appendDeploymentLog(deployment.id, line);
@@ -155,11 +193,16 @@ export async function runLifecycle(
   deployment.progress = 10;
   await saveDeployment(deployment);
 
-  await log(`[grid] workspace=${workspace} mode=${mode}`);
+  await log(
+    `[grid] terraformDir=${generatedDir} mode=${mode} archive=${resolved.writeArchive}`
+  );
 
-  // Destroy can run against existing generated dir; regenerate from current JSON first.
-  await log('[grid] generating terraform from config...');
-  const genCode = await generateTerraform(configPath, generatedDir, log);
+  // Always regenerate instance TF from current JSON before plan/apply/destroy.
+  await log('[grid] regenerating instance Terraform from JSON (module bank unchanged)...');
+  const genCode = await generateTerraform(resolved.configPath, generatedDir, log, {
+    configDir: resolved.configDir,
+    writeArchive: resolved.writeArchive,
+  });
   if (genCode !== 0) {
     await failDeployment(deployment, infra, '[grid] generate failed');
     return;

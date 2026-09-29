@@ -8,11 +8,20 @@ GitOps layout sketch alone.
 
 ```text
 ../demo-infra/
-  development/aws-vpc-vm/grid.json
-  development/gcp-vpc-vm/grid.json
-  staging/…
-  production/…
+  aws|gcp/
+    development|staging|production/
+      <infra-type>/              # vpc | ec2 | vm | s3 | gcs | …
+        <name>.json              # intent
+  archive/
+    aws|gcp/…/<name>/            # Terraform buffer (grid generate)
 ```
+
+Examples:
+
+- `aws/development/vpc/dev-demo-vpc.json`
+- `aws/development/ec2/dev-demo-app.json`
+- `gcp/development/vpc/dev-demo-vpc.json`
+- `gcp/development/vm/dev-demo-app.json`
 
 Ephemeral copies of an env (TTL, no sandbox): `grid env clone development --name try-x --ttl 24h`
 

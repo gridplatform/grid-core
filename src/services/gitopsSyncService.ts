@@ -66,11 +66,14 @@ async function discoverGridJsonFiles(
   root: string,
   pathPrefix: string
 ): Promise<Array<{ abs: string; gitPath: string }>> {
-  const base = path.join(root, pathPrefix);
+  const base =
+    !pathPrefix || pathPrefix === '.' || pathPrefix === './'
+      ? root
+      : path.join(root, pathPrefix);
   if (!(await fs.pathExists(base))) return [];
 
   const found: Array<{ abs: string; gitPath: string }> = [];
-  const skipDirs = new Set(['.git', '.grid', 'node_modules', 'scripts']);
+  const skipDirs = new Set(['.git', '.grid', 'node_modules', 'scripts', 'archive']);
   const skipNames = new Set([
     'catalog_index.json',
     'package.json',
@@ -114,39 +117,61 @@ async function discoverGridJsonFiles(
   return found;
 }
 
+/**
+ * Ensure GRID_CONFIG_ROOT is the desired-state working tree.
+ *
+ * - Already a git checkout → fetch/checkout the configured branch.
+ * - Local fixture / grid init without .git → use files on disk as-is (do NOT wipe).
+ * - Empty directory + remote URL → clone into GRID_CONFIG_ROOT.
+ *
+ * Archive/ writes always target this same tree (local demo or GitHub repo).
+ */
 async function ensureClone(settings: GitOpsSettings): Promise<string> {
-  const clonePath = gitopsCloneDir();
-  await fs.ensureDir(path.dirname(clonePath));
+  const root = gitopsCloneDir();
+  await fs.ensureDir(root);
+  const gitDir = path.join(root, '.git');
 
-  if (await fs.pathExists(path.join(clonePath, '.git'))) {
-    await runGit(['remote', 'set-url', 'origin', settings.repoUrl], clonePath);
-    const fetch = await runGit(['fetch', 'origin', settings.branch], clonePath);
-    if (fetch.code !== 0) {
-      throw new Error(`git fetch failed: ${fetch.stderr || fetch.stdout}`);
+  if (await fs.pathExists(gitDir)) {
+    if (settings.repoUrl) {
+      await runGit(['remote', 'set-url', 'origin', settings.repoUrl], root);
+      const fetch = await runGit(['fetch', 'origin', settings.branch], root);
+      if (fetch.code !== 0) {
+        throw new Error(`git fetch failed: ${fetch.stderr || fetch.stdout}`);
+      }
+      const checkout = await runGit(
+        ['checkout', '-B', settings.branch, `origin/${settings.branch}`],
+        root
+      );
+      if (checkout.code !== 0) {
+        throw new Error(`git checkout failed: ${checkout.stderr || checkout.stdout}`);
+      }
     }
-    const checkout = await runGit(
-      ['checkout', '-B', settings.branch, `origin/${settings.branch}`],
-      clonePath
-    );
-    if (checkout.code !== 0) {
-      throw new Error(`git checkout failed: ${checkout.stderr || checkout.stdout}`);
-    }
-    return clonePath;
+    return root;
   }
 
-  if (await fs.pathExists(clonePath)) {
-    await fs.remove(clonePath);
+  // Local testing / grid init without remotes: never delete the tree.
+  const entries = await fs.readdir(root);
+  const meaningful = entries.filter((e) => e !== '.DS_Store');
+  if (meaningful.length > 0 || !settings.repoUrl) {
+    return root;
   }
 
-  const parent = path.dirname(clonePath);
+  // Empty root + remote configured → clone into GRID_CONFIG_ROOT.
   const clone = await runGit(
-    ['clone', '--branch', settings.branch, '--single-branch', settings.repoUrl, clonePath],
-    parent
+    [
+      'clone',
+      '--branch',
+      settings.branch,
+      '--single-branch',
+      settings.repoUrl,
+      '.',
+    ],
+    root
   );
   if (clone.code !== 0) {
     throw new Error(`git clone failed: ${clone.stderr || clone.stdout}`);
   }
-  return clonePath;
+  return root;
 }
 
 export interface SyncResult {
@@ -161,7 +186,8 @@ export interface SyncResult {
 }
 
 /**
- * Pull the customer's desired-state repo and upsert Infrastructure records.
+ * Pull / read the customer's desired-state tree at GRID_CONFIG_ROOT and upsert
+ * Infrastructure records. Same root for local demo-infra and remote GitHub.
  */
 export async function syncGitOpsRepo(): Promise<SyncResult> {
   const settings = await loadGitOpsSettings();

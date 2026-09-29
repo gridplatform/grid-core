@@ -15,7 +15,7 @@ const router = Router();
 const SettingsSchema = z.object({
   repoUrl: z.string().min(1),
   branch: z.string().min(1).default('main'),
-  pathPrefix: z.string().min(1).default('infrastructures'),
+  pathPrefix: z.string().default(''),
   syncIntervalSec: z.number().int().min(0).default(0),
   enabled: z.boolean().default(true),
 });

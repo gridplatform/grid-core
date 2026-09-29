@@ -3,22 +3,32 @@
 Grid does **not** treat `workspaces/` + `data/store.json` as the source of truth
 for what *should* exist. Those are runtime caches.
 
-**Source of truth:** a Git repository **you** create when you install Grid.
-You commit Grid JSON there. Grid syncs it, plans/applies, and reports drift.
+**Source of truth:** `GRID_CONFIG_ROOT` — one working tree for **local testing** and
+**remote GitHub** alike. Intent JSON and `archive/` instance Terraform always
+live here. Behavior does not fork by transport.
 
-## Repo layout
+## Repo layout (same local or remote)
 
 ```text
-your-grid-desired-state/          # GRID_CONFIG_ROOT (owned by grid-core)
-  development|staging|production/
-    <stack>/
-      grid.json
+GRID_CONFIG_ROOT/                 # demo-infra locally, or clone of your GitHub repo
+  <cloud>/                         # aws | gcp | …
+    development|staging|production/
+      <infra-type>/                # vpc | ec2 | vm | eks | gke | …
+        <name>.json                # intent (edit / commit this)
+  archive/                         # instance Terraform (CLI/Core regenerate)
+    <cloud>/<env>/<type>/<name>/
+      main.tf …                    # rewritten from JSON on generate/plan/deploy
+      modules/                     # vendored from GRID_MODULE_BANK (bank never modified)
 ```
 
-Local demo (default): sibling **`demo-infra/`** — e.g.
-`demo-infra/development/aws-vpc-vm/grid.json`.
+| Mode | `GRID_CONFIG_ROOT` | GitOps |
+|------|--------------------|--------|
+| Local demo | `../demo-infra` | optional / off — files on disk |
+| Customer local | folder from `grid init` | optional |
+| Remote GitHub | checkout of that repo (same path Core syncs) | Sync pulls into this root |
 
-Each JSON is a normal Grid config (`provider`, `region`, `resources`, …).
+JSON change → regenerate **`archive/` instance HCL** (not the module bank). Same
+whether you run `grid generate` locally or Core plan/apply after Sync.
 
 ## Delete / stale behavior
 
@@ -45,20 +55,20 @@ If omitted, Grid derives a stable UUID from the file path.
 
 ## Operator flow
 
-1. Use local **`demo-infra/`** (default `GRID_CONFIG_ROOT`) or a Git repo with the layout above.
-2. In the console open **GitOps** → set repo URL / branch / path → **Save** → **Sync now** (skip for pure local demo JSON).
-3. Synced stacks appear under GitOps and **Infrastructure**.
-4. **Check drift** — Terraform plan of desired JSON vs state/live.
-5. Choose:
-   - **Match Git → live:** Plan → Apply (converge cloud to committed JSON).
-   - **Keep live → update Git:** edit JSON, commit, Sync.
-   - **JSON deleted:** Sync marks **stale** → confirm destroy via CLI/API.
-6. Optional env on grid-core:
+1. Point Core at the desired-state tree: `export GRID_CONFIG_ROOT=/path/to/repo`
+   (local demo: `../demo-infra`).
+2. Optional remote: set GitOps repo URL / branch (path prefix empty = repo root
+   with `aws|gcp/…` layout) → **Sync now**.
+3. Plan / Apply / CLI `generate` all write `archive/` under that same root.
+4. Commit + push `archive/` with your JSON if you want the exit buffer in GitHub.
+5. Optional env:
 
 ```bash
+GRID_CONFIG_ROOT=/path/to/desired-state
+GRID_MODULE_BANK=/path/to/grid-terraform
 GRID_GITOPS_REPO_URL=https://github.com/you/grid-desired-state.git
 GRID_GITOPS_BRANCH=main
-GRID_GITOPS_PATH=infrastructures
+GRID_GITOPS_PATH=           # empty = cloud/env/type at repo root
 GRID_GITOPS_SYNC_INTERVAL_SEC=60
 ```
 
