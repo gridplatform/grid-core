@@ -3,15 +3,34 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+function isGitRemote(value: string | undefined): boolean {
+  if (!value) return false;
+  const v = value.trim();
+  if (/^git::/i.test(v)) return true;
+  if (/^https?:\/\//i.test(v)) return true;
+  if (/^git@[^:]+:/.test(v)) return true;
+  return false;
+}
+
 function requiredPath(envValue: string | undefined, fallback: string): string {
   return path.resolve(envValue || fallback);
+}
+
+/** Path or pass-through git URL (do not path.resolve remotes). */
+function pathOrRemote(envValue: string | undefined, fallback: string): string {
+  const raw = (envValue || fallback).trim();
+  if (isGitRemote(raw)) return raw;
+  return path.resolve(raw);
 }
 
 const cwd = process.cwd();
 
 /**
  * Platform paths owned by Core; injected into CLI children via cliChildEnv.
- * GRID_CONFIG_ROOT is the single desired-state tree (intent JSON + archive/).
+ *
+ * Desired-state: local working tree (`GRID_CONFIG_ROOT`), filled from
+ * `GRID_GITOPS_REPO_URL` when using remote GitOps.
+ * Module bank: local path or git URL (`GRID_MODULE_BANK`) — CLI clones URLs.
  */
 export const config = {
   port: Number(process.env.PORT || 3000),
@@ -21,23 +40,32 @@ export const config = {
   /** grid-cli package root (templates/ + dist or src) */
   cliRoot: requiredPath(process.env.GRID_CLI_ROOT, path.join(cwd, '..', 'grid-cli')),
   /**
-   * Desired-state root. Set GRID_CONFIG_ROOT to the grid init repo;
-   * unset falls back to ../demo-infra (fixture).
+   * Desired-state working tree. When GRID_GITOPS_REPO_URL is set and
+   * GRID_CONFIG_ROOT is unset, default to data/desired-state (remote checkout).
+   * Otherwise fall back to ../demo-infra (fixture).
    */
   configRoot: requiredPath(
     process.env.GRID_CONFIG_ROOT,
-    path.join(cwd, '..', 'demo-infra')
+    process.env.GRID_GITOPS_REPO_URL
+      ? path.join(cwd, 'data', 'desired-state')
+      : path.join(cwd, '..', 'demo-infra')
   ),
-  /** True when configRoot is the demo-infra fixture */
+  /** True when using the demo-infra fixture (no GitOps remote, no explicit root) */
   configRootIsDemoFixture:
-    !process.env.GRID_CONFIG_ROOT ||
+    (!process.env.GRID_CONFIG_ROOT && !process.env.GRID_GITOPS_REPO_URL) ||
     process.env.GRID_USE_DEMO === '1' ||
     process.env.GRID_USE_DEMO === 'true',
-  /** Module bank path; passed to CLI as GRID_MODULE_BANK */
-  moduleBank: requiredPath(
+  /**
+   * Module bank: local path or git URL (CLI clones URL into cache under GRID_DATA_DIR).
+   */
+  moduleBank: pathOrRemote(
     process.env.GRID_MODULE_BANK,
     path.join(cwd, '..', 'grid-terraform')
   ),
+  moduleBankRef:
+    process.env.GRID_MODULE_BANK_REF ||
+    process.env.GRID_MODULE_BANK_BRANCH ||
+    'main',
   terraformBin: process.env.GRID_TERRAFORM_BIN || 'terraform',
   /** API applies use -auto-approve unless GRID_AUTO_APPROVE=false */
   autoApprove: process.env.GRID_AUTO_APPROVE !== 'false',
@@ -64,8 +92,9 @@ export function cliChildEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     GRID_CLI_ROOT: config.cliRoot,
     GRID_CONFIG_ROOT: config.configRoot,
     GRID_MODULE_BANK: config.moduleBank,
-    GRID_WORK_DIR: config.workDir,
+    GRID_MODULE_BANK_REF: config.moduleBankRef,
     GRID_DATA_DIR: config.dataDir,
+    GRID_WORK_DIR: config.workDir,
     GRID_TERRAFORM_BIN: config.terraformBin,
     ...extra,
   };

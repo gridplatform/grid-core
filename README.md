@@ -19,8 +19,10 @@ Listens on `http://localhost:3000` (`PORT`).
 
 | Variable | Purpose | Local default |
 |----------|---------|----------------|
-| `GRID_CONFIG_ROOT` | Desired-state root (**your** `grid init` repo) | test fallback: `../demo-infra` |
-| `GRID_MODULE_BANK` | `grid-terraform` module bank | `../grid-terraform` |
+| `GRID_CONFIG_ROOT` | Desired-state working tree (GitOps checkout) | `./data/desired-state` when `GRID_GITOPS_REPO_URL` is set; else `../demo-infra` |
+| `GRID_MODULE_BANK` | `grid-terraform` — **git URL or local path** | `../grid-terraform` |
+| `GRID_MODULE_BANK_REF` | Branch/tag when bank is a git URL | `main` |
+| `GRID_GITOPS_REPO_URL` | Remote desired-state repo | _(unset)_ |
 | `GRID_CLI_ROOT` | CLI package (add-on) | `../grid-cli` |
 | `GRID_WORK_DIR` | Terraform workspaces | `./workspaces` |
 | `GRID_DATA_DIR` | JSON store | `./data` |

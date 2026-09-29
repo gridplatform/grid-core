@@ -2,7 +2,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
 import { v5 as uuidv5 } from 'uuid';
-import type { CloudProviderType, Infrastructure } from '../types/api';
+import type { Infrastructure } from '../types/api';
 import type { GitOpsSettings } from '../types/gitops';
 import {
   createInfrastructure,
@@ -16,6 +16,8 @@ import {
   saveGitOpsRuntime,
 } from '../store/gitopsStore';
 import { hashContent } from './gitopsHash';
+import { providerFromConfig } from './providerLabels';
+import { projectSlugFromGitPath } from './projectsService';
 
 /** UUID v5 namespace for path → infra id */
 const GRID_GITOPS_NS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
@@ -34,14 +36,6 @@ function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: st
     child.on('error', reject);
     child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
   });
-}
-
-function providerFromConfig(cfg: Record<string, unknown>): CloudProviderType {
-  const p = String(cfg.provider || 'aws').toLowerCase();
-  if (p === 'gcp') return 'GCP';
-  if (p === 'azure') return 'Azure';
-  if (p === 'on-prem' || p === 'onprem') return 'On-Prem';
-  return 'AWS';
 }
 
 function nameFromConfig(cfg: Record<string, unknown>, fallback: string): string {
@@ -129,16 +123,15 @@ async function ensureClone(settings: GitOpsSettings): Promise<string> {
   if (await fs.pathExists(gitDir)) {
     if (settings.repoUrl) {
       await runGit(['remote', 'set-url', 'origin', settings.repoUrl], root);
-      const fetch = await runGit(['fetch', 'origin', settings.branch], root);
-      if (fetch.code !== 0) {
-        throw new Error(`git fetch failed: ${fetch.stderr || fetch.stdout}`);
-      }
-      const checkout = await runGit(
-        ['checkout', '-B', settings.branch, `origin/${settings.branch}`],
+      // Fast-forward only — never hard-reset local desired-state work.
+      const pull = await runGit(
+        ['pull', '--ff-only', 'origin', settings.branch],
         root
       );
-      if (checkout.code !== 0) {
-        throw new Error(`git checkout failed: ${checkout.stderr || checkout.stdout}`);
+      if (pull.code !== 0) {
+        console.warn(
+          `[gitops] ff-only pull skipped (${pull.stderr || pull.stdout || 'diverged'}). Keeping local tree.`
+        );
       }
     }
     return root;
@@ -211,6 +204,7 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
       const contentHash = hashContent(cfg);
       const existing = await getInfrastructure(id);
       const folderName = path.basename(path.dirname(file.gitPath));
+      const project = projectSlugFromGitPath(file.gitPath);
 
       if (!existing) {
         await createInfrastructure({
@@ -227,6 +221,7 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
           gitPath: file.gitPath,
           gitCommit: commit,
           gitContentHash: contentHash,
+          project,
         });
         created.push(id);
       } else {
@@ -242,6 +237,7 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
           name: nameFromConfig(cfg, existing.name),
           environment: environmentFromConfig(cfg),
           provider: providerFromConfig(cfg),
+          project,
           driftDetection: true,
           // Clear stale when file reappears
           status: existing.status === 'stale' ? 'pending' : existing.status,
@@ -290,6 +286,10 @@ export async function syncGitOpsRepo(): Promise<SyncResult> {
       lastCommitMessage: commitMessage,
       trackedCount: files.length,
     });
+
+    // Invalidate list-sync TTL so next UI load sees the new tree.
+    const { syncInfrastructuresFromConfigRoot } = await import('./configRootSync');
+    void syncInfrastructuresFromConfigRoot({ force: true });
 
     return result;
   } catch (err) {
