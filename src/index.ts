@@ -15,6 +15,12 @@ async function main() {
     console.log(`Config root:   ${config.configRoot}`);
     console.log(`Module bank:   ${config.moduleBank}`);
     console.log(`Work dir:      ${config.workDir}`);
+    if (config.configRootIsDemoFixture) {
+      console.warn(
+        '[grid-core] GRID_CONFIG_ROOT is the demo-infra test fixture — not a customer config. ' +
+          'For normal use: grid init && export GRID_CONFIG_ROOT=/path/to/that/repo'
+      );
+    }
   });
 
   // Optional background GitOps sync

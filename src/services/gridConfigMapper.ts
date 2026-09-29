@@ -46,12 +46,12 @@ function toDisplayProvider(providerId: string): CloudProviderType {
 /** Normalize UI/API env labels to CLI metadata.environment values. */
 function toCliEnvironment(
   environment: string
-): 'development' | 'sandbox' | 'staging' | 'production' {
+): 'development' | 'staging' | 'production' {
   const e = environment.toLowerCase();
   if (e === 'prod' || e === 'production') return 'production';
   if (e === 'staging' || e === 'stage') return 'staging';
-  if (e === 'sandbox') return 'sandbox';
-  return 'development'; // includes 'dev' | 'development' | unknown
+  // legacy "sandbox" maps to development (use env clone for isolation)
+  return 'development';
 }
 
 function slug(name: string): string {

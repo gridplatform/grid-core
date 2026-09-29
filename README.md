@@ -19,7 +19,7 @@ Listens on `http://localhost:3000` (`PORT`).
 
 | Variable | Purpose | Local default |
 |----------|---------|----------------|
-| `GRID_CONFIG_ROOT` | Desired-state root | `./examples/gitops-repo` |
+| `GRID_CONFIG_ROOT` | Desired-state root (**your** `grid init` repo) | test fallback: `../demo-infra` |
 | `GRID_MODULE_BANK` | `grid-terraform` module bank | `../grid-terraform` |
 | `GRID_CLI_ROOT` | CLI package (add-on) | `../grid-cli` |
 | `GRID_WORK_DIR` | Terraform workspaces | `./workspaces` |
@@ -27,9 +27,21 @@ Listens on `http://localhost:3000` (`PORT`).
 | `GRID_TERRAFORM_BIN` | `terraform` binary | `terraform` |
 | `GRID_AUTO_APPROVE` | Apply `-auto-approve` | `true` |
 
-Demo unit: `examples/gitops-repo/infrastructures/demo-vpc/grid.json`.
+**`demo-infra` is a test fixture only** — not the final customer configuration.
+Normal installs: `grid init` → set `GRID_CONFIG_ROOT` to that directory.
 
-## Deploy path
+## Normal install (not demo)
+
+```bash
+mkdir my-infra && cd my-infra
+git init
+grid init --git --sample          # from grid-cli (npm run grid -- init …)
+
+export GRID_CONFIG_ROOT=$PWD      # point grid-core at THIS repo
+# start grid-core with that env
+
+grid generate -c development/example-vpc/grid.json --config-dir "$GRID_CONFIG_ROOT" -o ./out
+```
 
 `POST /api/v1/deployments` with `{ name, engine, provider, environment, resourceType, config }`.
 

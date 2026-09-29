@@ -1,38 +1,28 @@
 # Examples
 
-Local desired-state for testing **without** `grid-config`.
+## Desired-state for local testing
 
-## Demo GitOps tree
+**Use `../demo-infra`** (sibling of `grid-core`). That is the default
+`GRID_CONFIG_ROOT` owned by Core — not `grid-config`, and not this folder’s
+GitOps layout sketch alone.
 
 ```text
-examples/gitops-repo/                 ← GRID_CONFIG_ROOT (owned by grid-core)
-  infrastructures/                    ← GRID_GITOPS_PATH
-    demo-vpc/
-      grid.json                       ← AWS VPC + subnet sample
+../demo-infra/
+  development/aws-vpc-vm/grid.json
+  development/gcp-vpc-vm/grid.json
+  staging/…
+  production/…
 ```
 
-grid-core defaults:
+Ephemeral copies of an env (TTL, no sandbox): `grid env clone development --name try-x --ttl 24h`
 
-| Env | Default |
-|-----|---------|
-| `GRID_CONFIG_ROOT` | `./examples/gitops-repo` |
+| Env | Default (from grid-core) |
+|-----|--------------------------|
+| `GRID_CONFIG_ROOT` | `../demo-infra` |
 | `GRID_MODULE_BANK` | `../grid-terraform` |
 | `GRID_CLI_ROOT` | `../grid-cli` |
 
-When the API runs generate/plan/apply, it injects those into the CLI process.
-The CLI does not invent product paths — Core does.
+## GitOps layout sketch only
 
-## CLI smoke (add-on)
-
-From `grid-cli`, with Core’s defaults (or export the same env):
-
-```bash
-export GRID_CONFIG_ROOT=../grid-core/examples/gitops-repo
-export GRID_MODULE_BANK=../grid-terraform
-
-npm run grid -- generate \
-  -c ../grid-core/examples/gitops-repo/infrastructures/demo-vpc/grid.json \
-  --config-dir "$GRID_CONFIG_ROOT" \
-  -o /tmp/grid-demo-vpc \
-  --format terraform
-```
+`examples/gitops-repo/` shows a sync path shape (`infrastructures/<name>/grid.json`).
+Copy real stacks from `demo-infra` when you need product env content.

@@ -10,14 +10,13 @@ You commit Grid JSON there. Grid syncs it, plans/applies, and reports drift.
 
 ```text
 your-grid-desired-state/          # GRID_CONFIG_ROOT (owned by grid-core)
-  infrastructures/                # or cloud/env/type layout
-    demo-vpc/
+  development|staging|production/
+    <stack>/
       grid.json
 ```
 
-Local demo (no remote Git, no grid-config):
-
-`grid-core/examples/gitops-repo/` — default `GRID_CONFIG_ROOT`.
+Local demo (default): sibling **`demo-infra/`** — e.g.
+`demo-infra/development/aws-vpc-vm/grid.json`.
 
 Each JSON is a normal Grid config (`provider`, `region`, `resources`, …).
 
@@ -46,7 +45,7 @@ If omitted, Grid derives a stable UUID from the file path.
 
 ## Operator flow
 
-1. Use the local demo tree (`examples/gitops-repo`) or create a Git repo with the layout above.
+1. Use local **`demo-infra/`** (default `GRID_CONFIG_ROOT`) or a Git repo with the layout above.
 2. In the console open **GitOps** → set repo URL / branch / path → **Save** → **Sync now** (skip for pure local demo JSON).
 3. Synced stacks appear under GitOps and **Infrastructure**.
 4. **Check drift** — Terraform plan of desired JSON vs state/live.

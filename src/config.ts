@@ -25,13 +25,21 @@ export const config = {
    */
   cliRoot: requiredPath(process.env.GRID_CLI_ROOT, path.join(cwd, '..', 'grid-cli')),
   /**
-   * Desired-state root (GitOps checkout / local demo tree).
-   * Default for local testing: examples/gitops-repo (NOT grid-config).
+   * Desired-state root (customer Git repo in real installs).
+   *
+   * - Production / normal: set GRID_CONFIG_ROOT to the repo from `grid init`.
+   * - Local API testing only: omit it and we fall back to ../demo-infra when
+   *   GRID_USE_DEMO=1, otherwise still ../demo-infra with a startup warning.
    */
   configRoot: requiredPath(
     process.env.GRID_CONFIG_ROOT,
-    path.join(cwd, 'examples', 'gitops-repo')
+    path.join(cwd, '..', 'demo-infra')
   ),
+  /** True when using the demo-infra test fixture (not a customer root). */
+  configRootIsDemoFixture:
+    !process.env.GRID_CONFIG_ROOT ||
+    process.env.GRID_USE_DEMO === '1' ||
+    process.env.GRID_USE_DEMO === 'true',
   /**
    * grid-terraform module bank. Injected to CLI as GRID_MODULE_BANK.
    */
