@@ -1,7 +1,7 @@
 import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
-import { config } from '../config';
+import { cliChildEnv, config } from '../config';
 import type { Deployment, Infrastructure, LifecycleMode } from '../types/api';
 import {
   appendDeploymentLog,
@@ -18,7 +18,7 @@ async function runCommand(
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
-      env: process.env,
+      env: cliChildEnv(),
       shell: false,
     });
 
@@ -51,7 +51,7 @@ async function captureCommand(
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
-      env: process.env,
+      env: cliChildEnv(),
       shell: false,
     });
     let stdout = '';
