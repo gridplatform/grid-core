@@ -8,39 +8,41 @@ Scripts and Compose for running Grid on a VM or with Docker. Narrative guides:
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | Ubuntu VM installer (Node + systemd + nginx, or Compose) |
-| `docker-compose.yml` | `core` + `ui` (UI image from public grid-ui) |
-| `.env.example` | Auth, GitOps, **and remote state (`GRID_TF_*`)** |
-| `systemd/grid-core.service` | API unit |
-| `systemd/grid-ui.service` | Optional static UI via `serve` (nginx preferred) |
-| `nginx-host.conf` | Host nginx: UI static + `/api` → core |
+| `install.sh` | **Default = Compose** on Ubuntu; `GRID_USE_NATIVE=1` for systemd+nginx |
+| `docker-compose.yml` | `core` + `ui` |
+| `verify.sh` | Smoke-check `/health` + UI |
+| `.env.example` | Auth, GitOps, **remote state (`GRID_TF_*`)** |
+| `systemd/grid-core.service` | Native API unit |
+| `systemd/grid-ui.service` | Optional (nginx preferred) |
+| `nginx-host.conf` | Native: UI static + `/api` → core |
 | `../Dockerfile` | Core image (bundles CLI + Terraform) |
 
 **Before applying infra:** create remote state (S3 / GCS / Azure) and set `GRID_TF_*` —  
 [remote-state.md](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md).
 
-## Quick — Docker Compose
+## Quick — Docker Compose (also the VM default)
 
 ```bash
 git clone https://github.com/gridplatform/grid-core.git
 cd grid-core
 cp install/.env.example install/.env
-# edit GRID_AUTH_ADMIN_PASSWORD
+# edit GRID_AUTH_ADMIN_PASSWORD (+ GRID_TF_* for real applies)
 docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+bash install/verify.sh
 ```
 
 Open `http://<host>/` (port `GRID_HTTP_PORT`, default 80).
 
-## Quick — VM one-liner
+## Quick — VM one-liner (Compose)
 
 ```bash
 export GRID_AUTH_ADMIN_PASSWORD='choose-a-strong-password'
 curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
 ```
 
-Compose instead of systemd:
+Native (no Docker):
 
 ```bash
-export GRID_USE_COMPOSE=1 GRID_AUTH_ADMIN_PASSWORD='…'
+export GRID_USE_NATIVE=1 GRID_AUTH_ADMIN_PASSWORD='…'
 curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
 ```

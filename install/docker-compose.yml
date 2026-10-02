@@ -1,11 +1,11 @@
 # Grid control plane — Docker Compose
 #
 # From a clone of grid-core:
-#   cp install/.env.example install/.env   # edit password!
+#   cp install/.env.example install/.env   # edit password + GRID_TF_*
 #   docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
 #
-# UI image is built from the public grid-ui GitHub repo.
-# Core image builds grid-cli from GitHub during docker build.
+# UI image builds from the public grid-ui repo (override with GRID_UI_CONTEXT).
+# Core image clones grid-cli during docker build.
 
 name: grid
 
@@ -17,8 +17,10 @@ services:
       args:
         GRID_CLI_REF: ${GRID_CLI_REF:-main}
         TERRAFORM_VERSION: ${TERRAFORM_VERSION:-1.9.8}
+    # Optional extra file; --env-file / environment: below are enough for a fresh install
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       PORT: "3000"
       GRID_CLI_ROOT: /opt/grid/grid-cli
@@ -32,7 +34,6 @@ services:
       GRID_AUTH_ADMIN_EMAIL: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local}
       GRID_AUTH_ADMIN_PASSWORD: ${GRID_AUTH_ADMIN_PASSWORD:?set GRID_AUTH_ADMIN_PASSWORD in install/.env}
       GRID_AUTO_APPROVE: ${GRID_AUTO_APPROVE:-true}
-      # Remote state (set in install/.env — create bucket/table first)
       GRID_TF_BACKEND: ${GRID_TF_BACKEND:-local}
       GRID_TF_STATE_BUCKET: ${GRID_TF_STATE_BUCKET:-}
       GRID_TF_LOCK_TABLE: ${GRID_TF_LOCK_TABLE:-}
@@ -44,12 +45,17 @@ services:
       - grid-data:/var/lib/grid/data
       - grid-workspaces:/var/lib/grid/workspaces
       - grid-desired-state:/var/lib/grid/desired-state
-    # Optional: mount host AWS/GCP creds for terraform apply from this host
-    # volumes:
+    # Optional cloud creds for terraform apply from this host:
     #   - ${HOME}/.aws:/root/.aws:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 15s
       timeout: 5s
       retries: 10

@@ -8,11 +8,12 @@ and streams status/logs.
 [grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install).
 
 ```bash
-# Docker Compose
+# Docker Compose (default on VMs too)
 cp install/.env.example install/.env   # set GRID_AUTH_ADMIN_PASSWORD
 docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+bash install/verify.sh
 
-# Or Ubuntu VM one-liner
+# Or Ubuntu VM one-liner (Compose)
 # curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
 ```
 

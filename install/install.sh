@@ -11,8 +11,9 @@
 #   GRID_REF=main                 # git ref for core/ui/cli
 #   GRID_AUTH_ADMIN_EMAIL=...
 #   GRID_AUTH_ADMIN_PASSWORD=...  # required for non-interactive; else prompted
-#   GRID_SKIP_SYSTEMD=1           # clone+build only
-#   GRID_USE_COMPOSE=1            # use Docker Compose instead of systemd+Node
+#   GRID_USE_NATIVE=1             # systemd + nginx instead of Compose (default is Compose)
+#   GRID_USE_COMPOSE=0            # same as GRID_USE_NATIVE=1 (legacy alias invert)
+#   GRID_SKIP_SYSTEMD=1           # native path: clone+build only
 
 set -euo pipefail
 
@@ -215,10 +216,15 @@ install_systemd_path() {
 }
 
 main() {
-  if [[ "${GRID_USE_COMPOSE:-0}" == "1" ]]; then
-    install_compose_path
-  else
+  # Default: Compose on the VM. Native systemd path: GRID_USE_NATIVE=1
+  local use_native="${GRID_USE_NATIVE:-0}"
+  if [[ "${GRID_USE_COMPOSE:-1}" == "0" ]]; then
+    use_native=1
+  fi
+  if [[ "$use_native" == "1" ]]; then
     install_systemd_path
+  else
+    install_compose_path
   fi
 }
 
