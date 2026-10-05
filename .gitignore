@@ -2,6 +2,8 @@
 data/
 workspaces/
 .env
+!.env.example
+!install/.env.example
 node_modules/
 dist/
 *.log
