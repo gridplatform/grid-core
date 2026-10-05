@@ -1,8 +1,15 @@
 # Grid control plane — Docker Compose
 #
-# From a clone of grid-core:
+# Always run DETACHED (-d). Do NOT use foreground `up` on a server — closing
+# SSH would not stop containers if -d was used, but foreground ties to the TTY.
+#
 #   cp install/.env.example install/.env   # edit password + GRID_TF_*
 #   docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+#
+# Persistence:
+#   - restart: unless-stopped  → containers recover after crash / Docker restart
+#   - systemctl enable docker  → Docker starts on reboot
+#   - optional: install/systemd/grid-compose.service → re-runs `compose up -d` on boot
 #
 # UI image builds from the public grid-ui repo (override with GRID_UI_CONTEXT).
 # Core image clones grid-cli during docker build.

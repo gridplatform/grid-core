@@ -17,9 +17,10 @@ Environment=GRID_DATA_DIR=/var/lib/grid/data
 Environment=GRID_WORK_DIR=/var/lib/grid/workspaces
 Environment=GRID_CONFIG_ROOT=/var/lib/grid/desired-state
 ExecStart=/usr/bin/node dist/index.js
-Restart=on-failure
+Restart=always
 RestartSec=5
 TimeoutStopSec=60
+KillMode=mixed
 
 # Soft hardening
 NoNewPrivileges=true

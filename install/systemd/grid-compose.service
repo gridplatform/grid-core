@@ -1,0 +1,19 @@
+[Unit]
+Description=Grid Platform (Docker Compose stack)
+Documentation=https://github.com/gridplatform/grid-docs/blob/main/docs/install/vm.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/grid/grid-core
+EnvironmentFile=-/opt/grid/grid-core/install/.env
+# Detached: does not tie to an SSH session; containers keep running after this unit finishes
+ExecStart=/usr/bin/docker compose -f install/docker-compose.yml --env-file install/.env up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f install/docker-compose.yml --env-file install/.env stop
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

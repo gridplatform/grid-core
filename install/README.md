@@ -8,11 +8,12 @@ Scripts and Compose for running Grid on a VM or with Docker. Narrative guides:
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | **Default = Compose** on Ubuntu; `GRID_USE_NATIVE=1` for systemd+nginx |
-| `docker-compose.yml` | `core` + `ui` |
+| `install.sh` | **Default = Compose** on Ubuntu (detached + enable on boot); `GRID_USE_NATIVE=1` for systemd+nginx |
+| `docker-compose.yml` | `core` + `ui` (`restart: unless-stopped`) |
 | `verify.sh` | Smoke-check `/health` + UI |
 | `.env.example` | Auth, GitOps, **remote state (`GRID_TF_*`)** |
-| `systemd/grid-core.service` | Native API unit |
+| `systemd/grid-compose.service` | Bring Compose stack up on reboot |
+| `systemd/grid-core.service` | Native API unit (`Restart=always`) |
 | `systemd/grid-ui.service` | Optional (nginx preferred) |
 | `nginx-host.conf` | Native: UI static + `/api` → core |
 | `../Dockerfile` | Core image (bundles CLI + Terraform) |
@@ -31,7 +32,19 @@ docker compose -f install/docker-compose.yml --env-file install/.env up -d --bui
 bash install/verify.sh
 ```
 
-Open `http://<host>/` (port `GRID_HTTP_PORT`, default 80).
+**Always use `-d` (detached).** Grid must not be tied to your SSH session.
+
+For a server that should survive reboot:
+
+```bash
+sudo systemctl enable --now docker
+sudo cp install/systemd/grid-compose.service /etc/systemd/system/
+# if repo is not under /opt/grid/grid-core, edit WorkingDirectory in the unit
+sudo systemctl daemon-reload
+sudo systemctl enable --now grid-compose
+```
+
+Containers also have `restart: unless-stopped` so they come back after crashes.
 
 ## Quick — VM one-liner (Compose)
 

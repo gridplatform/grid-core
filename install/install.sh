@@ -131,19 +131,38 @@ EOF
 install_compose_path() {
   need_root
   prompt_password
-  log "Installing Docker (if needed) + Compose path"
+  log "Installing Docker (if needed) + Compose path (detached, survives logout + reboot)"
   apt-get update
   apt-get install -y ca-certificates curl git
   if ! command -v docker >/dev/null 2>&1; then
     curl -fsSL https://get.docker.com | sh
   fi
+  # Docker must start on boot so containers with restart: unless-stopped come back
+  systemctl enable --now docker
+
   mkdir -p "$GRID_HOME"
   clone_or_update "${GRID_ORG}/grid-core.git" "${GRID_HOME}/grid-core" "$GRID_REF"
   write_env "${GRID_HOME}/grid-core/install/.env"
   cd "${GRID_HOME}/grid-core"
-  docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
-  log "Grid is up via Compose on port ${GRID_HTTP_PORT}"
-  log "Open http://<this-host>:${GRID_HTTP_PORT}/  (admin: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local})"
+
+  # -d = detached: not attached to this SSH/terminal session
+  docker compose -f install/docker-compose.yml --env-file install/.env up -d --build --remove-orphans
+
+  # Ensure stack is brought up again after reboot (in addition to container restart policies)
+  cp "${GRID_HOME}/grid-core/install/systemd/grid-compose.service" /etc/systemd/system/grid-compose.service
+  # Point WorkingDirectory at this install (unit file uses /opt/grid/grid-core by default)
+  if [[ "$GRID_HOME" != "/opt/grid" ]]; then
+    sed -i "s|/opt/grid/grid-core|${GRID_HOME}/grid-core|g" /etc/systemd/system/grid-compose.service
+  fi
+  systemctl daemon-reload
+  systemctl enable --now grid-compose.service
+
+  log "Grid is running in the background (Docker Compose)."
+  log "  Survives SSH logout; restarts on reboot (docker + grid-compose + restart: unless-stopped)."
+  log "  Open http://<this-host>:${GRID_HTTP_PORT}/  (admin: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local})"
+  log "  Status:  docker compose -f ${GRID_HOME}/grid-core/install/docker-compose.yml ps"
+  log "  Logs:    docker compose -f ${GRID_HOME}/grid-core/install/docker-compose.yml logs -f --tail=100"
+  log "  Stop:    systemctl stop grid-compose   # or: docker compose ... stop"
 }
 
 install_systemd_path() {
@@ -209,9 +228,11 @@ install_systemd_path() {
   systemctl enable --now nginx
   systemctl reload nginx
 
-  log "Done."
+  log "Done — Grid is managed by systemd (survives logout + reboot)."
   log "  Open http://<this-host>/  (admin: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local})"
   log "  API health: http://<this-host>/health"
+  log "  Status: systemctl status grid-core nginx"
+  log "  Logs:   journalctl -u grid-core -f"
   log "Docs: https://github.com/gridplatform/grid-docs/blob/main/docs/install/vm.md"
 }
 
