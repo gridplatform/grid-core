@@ -72,8 +72,6 @@ export const config = {
    */
   moduleBankSyncIntervalSec: Number(process.env.GRID_MODULE_BANK_SYNC_INTERVAL_SEC || 0),
   terraformBin: process.env.GRID_TERRAFORM_BIN || 'terraform',
-  /** API applies use -auto-approve unless GRID_AUTO_APPROVE=false */
-  autoApprove: process.env.GRID_AUTO_APPROVE !== 'false',
   /** Optional GitOps bootstrap (also settable via API) */
   gitops: {
     repoUrl: process.env.GRID_GITOPS_REPO_URL || '',

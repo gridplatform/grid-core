@@ -49,8 +49,7 @@ ENV NODE_ENV=production \
     GRID_CONFIG_ROOT=/var/lib/grid/desired-state \
     GRID_MODULE_BANK=https://github.com/gridplatform/grid-terraform.git \
     GRID_MODULE_BANK_REF=main \
-    GRID_TERRAFORM_BIN=terraform \
-    GRID_AUTO_APPROVE=true
+    GRID_TERRAFORM_BIN=terraform
 
 RUN mkdir -p /var/lib/grid/data /var/lib/grid/workspaces /var/lib/grid/desired-state
 

@@ -40,7 +40,6 @@ Listens on `http://localhost:3000` (`PORT`).
 | `GRID_WORK_DIR` | Terraform workspaces | `./workspaces` |
 | `GRID_DATA_DIR` | JSON store | `./data` |
 | `GRID_TERRAFORM_BIN` | `terraform` binary | `terraform` |
-| `GRID_AUTO_APPROVE` | Apply `-auto-approve` | `true` |
 
 **`demo-infra` is a test fixture only** — not the final customer configuration.
 Normal installs: `grid init` → set `GRID_CONFIG_ROOT` to that directory.

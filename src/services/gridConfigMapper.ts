@@ -48,15 +48,10 @@ function toDisplayProvider(providerId: string): CloudProviderType {
   return providerId.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Normalize UI/API env labels to CLI metadata.environment. */
-function toCliEnvironment(
-  environment: string
-): 'development' | 'staging' | 'production' {
-  const e = environment.toLowerCase();
-  if (e === 'prod' || e === 'production') return 'production';
-  if (e === 'staging' || e === 'stage') return 'staging';
-  // "sandbox" → development
-  return 'development';
+/** Pass through the discovered environment folder name into grid.json metadata. */
+function toCliEnvironment(environment: string): string {
+  const e = environment.trim();
+  return e || 'development';
 }
 
 function slug(name: string): string {

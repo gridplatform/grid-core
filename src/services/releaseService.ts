@@ -22,6 +22,10 @@ import {
   runLifecycle,
 } from './lifecycleService';
 import { killTrackedProcesses, releaseRunKey, trackChildProcess } from './processRegistry';
+import {
+  getApprovalRequired,
+  modeRequiresApprovalGate,
+} from './approvalPolicyStore';
 
 const ALLOWED_GRID_SUBCOMMANDS = new Set([
   'status',
@@ -262,7 +266,11 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
     infrastructureName = infra.name;
   }
 
-  const active = await findActiveRelease();
+  const needsApproval =
+    modeRequiresApprovalGate(input.mode) &&
+    (await getApprovalRequired(input.environment));
+
+  const active = needsApproval ? undefined : await findActiveRelease();
 
   const { createRelease } = await import('./releaseStore');
   const release = await createRelease({
@@ -277,16 +285,21 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
     infrastructureId: input.infrastructureId,
     infrastructureName,
     customCommand: input.customCommand,
-    status: 'queued',
+    status: needsApproval ? 'pending_approval' : 'queued',
     createdBy: input.createdBy,
   });
 
-  if (active) {
+  if (needsApproval) {
+    release.message = `Waiting for approval (${input.environment})`;
+    await saveRelease(release);
+  } else if (active) {
     release.message = `Queued behind “${active.name}” — only one release runs at a time`;
     await saveRelease(release);
   }
 
-  void processReleaseQueue();
+  if (!needsApproval) {
+    void processReleaseQueue();
+  }
   const saved = (await getRelease(release.id))!;
   try {
     const { recordAudit } = await import('./auditStore');
@@ -296,18 +309,147 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
       resourceType: 'release',
       resourceId: saved.id,
       resourceName: saved.name,
-      summary: `Created ${saved.mode} release: ${saved.name}`,
+      summary: needsApproval
+        ? `Created ${saved.mode} release pending approval: ${saved.name}`
+        : `Created ${saved.mode} release: ${saved.name}`,
       details: {
         mode: saved.mode,
         environment: saved.environment,
         infrastructureId: saved.infrastructureId,
         status: saved.status,
+        approvalRequired: needsApproval,
       },
     });
   } catch {
     /* ignore */
   }
   return saved;
+}
+
+export type ApprovalDecision = {
+  id: string;
+  releaseId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requiredRole: 'developer' | 'maintainer' | 'admin';
+  requestedBy: string;
+  requestedAt: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  comment?: string;
+};
+
+function releaseToApproval(release: Release): ApprovalDecision {
+  const status: ApprovalDecision['status'] =
+    release.status === 'pending_approval'
+      ? 'pending'
+      : release.approvedBy
+        ? 'approved'
+        : release.status === 'cancelled' && release.message?.toLowerCase().includes('reject')
+          ? 'rejected'
+          : 'pending';
+  return {
+    id: release.id,
+    releaseId: release.id,
+    status,
+    requiredRole: 'maintainer',
+    requestedBy: release.createdBy,
+    requestedAt: release.createdAt,
+    reviewedBy: release.approvedBy,
+    reviewedAt: release.approvedAt,
+    comment: release.message,
+  };
+}
+
+/** Pending human approvals (release id == approval id). */
+export async function listPendingApprovals(): Promise<ApprovalDecision[]> {
+  const { listReleases } = await import('./releaseStore');
+  const items = await listReleases();
+  return items
+    .filter((r) => r.status === 'pending_approval')
+    .map(releaseToApproval)
+    .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1));
+}
+
+/** Approve a pending release → queued for execution. */
+export async function approveRelease(
+  releaseId: string,
+  actor: string,
+  comment?: string
+): Promise<ApprovalDecision> {
+  const release = await getRelease(releaseId);
+  if (!release) throw new Error('Release not found');
+  if (release.status !== 'pending_approval') {
+    throw new Error(`Release is ${release.status}, not pending approval`);
+  }
+  if (release.createdBy.toLowerCase() === actor.toLowerCase()) {
+    throw new Error('Requester cannot approve their own release');
+  }
+
+  release.status = 'queued';
+  release.approvedBy = actor;
+  release.approvedAt = new Date().toISOString();
+  release.message = comment?.trim()
+    ? `Approved by ${actor}: ${comment.trim()}`
+    : `Approved by ${actor}`;
+  await saveRelease(release);
+  await appendReleaseLog(release.id, `[grid] approved by ${actor}`);
+
+  try {
+    const { recordAudit } = await import('./auditStore');
+    await recordAudit({
+      action: 'release.approve',
+      actor,
+      resourceType: 'release',
+      resourceId: release.id,
+      resourceName: release.name,
+      summary: `Approved release: ${release.name}`,
+      details: { environment: release.environment, mode: release.mode, comment },
+    });
+  } catch {
+    /* ignore */
+  }
+
+  void processReleaseQueue();
+  return releaseToApproval((await getRelease(release.id))!);
+}
+
+/** Reject a pending release. */
+export async function rejectRelease(
+  releaseId: string,
+  actor: string,
+  comment?: string
+): Promise<ApprovalDecision> {
+  const release = await getRelease(releaseId);
+  if (!release) throw new Error('Release not found');
+  if (release.status !== 'pending_approval') {
+    throw new Error(`Release is ${release.status}, not pending approval`);
+  }
+
+  release.status = 'cancelled';
+  release.completedAt = new Date().toISOString();
+  release.message = comment?.trim()
+    ? `Rejected by ${actor}: ${comment.trim()}`
+    : `Rejected by ${actor}`;
+  await saveRelease(release);
+  await appendReleaseLog(release.id, `[grid] rejected by ${actor}`);
+
+  try {
+    const { recordAudit } = await import('./auditStore');
+    await recordAudit({
+      action: 'release.reject',
+      actor,
+      resourceType: 'release',
+      resourceId: release.id,
+      resourceName: release.name,
+      summary: `Rejected release: ${release.name}`,
+      details: { environment: release.environment, mode: release.mode, comment },
+      outcome: 'denied',
+    });
+  } catch {
+    /* ignore */
+  }
+
+  return releaseToApproval(release);
 }
 
 /**

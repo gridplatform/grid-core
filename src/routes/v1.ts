@@ -21,7 +21,14 @@ import {
   restoreInfrastructureToConfig,
   syncInfrastructuresFromConfigRoot,
 } from '../services/configRootSync';
-import { enqueueRelease, cancelRelease } from '../services/releaseService';
+import {
+  enqueueRelease,
+  cancelRelease,
+  listPendingApprovals,
+  approveRelease,
+  rejectRelease,
+} from '../services/releaseService';
+import { setApprovalRequired } from '../services/approvalPolicyStore';
 import { getRelease, listReleases } from '../services/releaseStore';
 import {
   DeployMapError,
@@ -735,13 +742,53 @@ router.post('/releases/:id/cancel', requireRole('admin'), async (req, res) => {
   }
 });
 
-router.get('/approvals', empty);
-router.post('/approvals/:id/approve', (_req, res) => {
-  res.status(501).json({ code: 'not_implemented', message: 'Approvals not enabled' });
+router.get('/approvals', async (_req, res) => {
+  res.json(await listPendingApprovals());
 });
-router.post('/approvals/:id/reject', (_req, res) => {
-  res.status(501).json({ code: 'not_implemented', message: 'Approvals not enabled' });
-});
+
+router.post(
+  '/approvals/:id/approve',
+  requireRole('maintainer', 'admin'),
+  async (req, res) => {
+    try {
+      const comment =
+        typeof req.body?.comment === 'string' ? req.body.comment : undefined;
+      const approval = await approveRelease(req.params.id, getActorEmail(req), comment);
+      res.json(approval);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const code = message.includes('not found')
+        ? 404
+        : message.includes('own release')
+          ? 403
+          : 400;
+      res.status(code).json({
+        code: code === 404 ? 'not_found' : code === 403 ? 'forbidden' : 'approval_error',
+        message,
+      });
+    }
+  }
+);
+
+router.post(
+  '/approvals/:id/reject',
+  requireRole('maintainer', 'admin'),
+  async (req, res) => {
+    try {
+      const comment =
+        typeof req.body?.comment === 'string' ? req.body.comment : undefined;
+      const approval = await rejectRelease(req.params.id, getActorEmail(req), comment);
+      res.json(approval);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const code = message.includes('not found') ? 404 : 400;
+      res.status(code).json({
+        code: code === 404 ? 'not_found' : 'approval_error',
+        message,
+      });
+    }
+  }
+);
 
 router.get('/clusters', empty);
 router.post('/clusters/:id/scale', (_req, res) => {
@@ -807,6 +854,55 @@ router.get('/environments', async (req, res) => {
       : undefined;
   res.json(await listEnvironmentsFromConfig(project));
 });
+
+/** Admin: set whether apply/destroy/custom releases for an env require approval. */
+router.patch(
+  '/environments/:slug/approval',
+  requireRole('admin'),
+  async (req, res) => {
+    const slug = req.params.slug?.trim();
+    if (!slug) {
+      res.status(400).json({ code: 'validation_error', message: 'Environment slug required' });
+      return;
+    }
+    if (typeof req.body?.approvalRequired !== 'boolean') {
+      res.status(400).json({
+        code: 'validation_error',
+        message: 'Body must include approvalRequired: boolean',
+      });
+      return;
+    }
+    try {
+      const policy = await setApprovalRequired(
+        slug,
+        req.body.approvalRequired,
+        getActorEmail(req)
+      );
+      try {
+        await recordAudit({
+          action: 'environment.approval_policy',
+          actor: getActorEmail(req),
+          actorRole: getActorRole(req),
+          resourceType: 'environment',
+          resourceId: slug,
+          resourceName: slug,
+          summary: `Set approvalRequired=${policy.approvalRequired} for ${slug}`,
+          details: { approvalRequired: policy.approvalRequired },
+        });
+      } catch {
+        /* ignore */
+      }
+      const environments = await listEnvironmentsFromConfig();
+      const env = environments.find((e) => e.slug.toLowerCase() === slug.toLowerCase());
+      res.json(env || { slug: policy.slug, approvalRequired: policy.approvalRequired });
+    } catch (err) {
+      res.status(400).json({
+        code: 'policy_error',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+);
 
 router.get('/projects', async (_req, res) => {
   res.json(await listProjectsFromConfig());

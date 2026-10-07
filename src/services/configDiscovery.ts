@@ -1,6 +1,10 @@
 import path from 'path';
 import fs from 'fs-extra';
 import { config } from '../config';
+import {
+  defaultApprovalRequired,
+  listApprovalPolicies,
+} from './approvalPolicyStore';
 
 const SKIP_DIRS = new Set([
   '.grid',
@@ -101,6 +105,7 @@ function titleCase(slug: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Soft label for sorting / hints only — discovery itself is folder-based. */
 function looksLikeEnv(name: string): boolean {
   if (ENV_ORDER[name] != null) return true;
   return /^(dev|development|staging|stage|prod|production|qa|test|sandbox|preview)([-_].+)?$/i.test(
@@ -112,13 +117,22 @@ function looksLikeCloud(name: string): boolean {
   return KNOWN_CLOUDS.has(name.toLowerCase());
 }
 
-/** Cloud if known name, or directory contains env folders (development/…). */
+/**
+ * Cloud provider directory under projects/<slug>/.
+ * Known cloud names always qualify. Other names qualify when they contain
+ * at least one environment subdirectory (common name or any folder with units).
+ */
 async function isCloudDir(abs: string, name: string): Promise<boolean> {
   if (looksLikeCloud(name)) return true;
   if (looksLikeEnv(name) || SKIP_DIRS.has(name) || name.startsWith('.')) return false;
   try {
     const entries = await fs.readdir(abs, { withFileTypes: true });
-    return entries.some((e) => e.isDirectory() && looksLikeEnv(e.name));
+    for (const e of entries) {
+      if (!e.isDirectory() || SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+      if (looksLikeEnv(e.name)) return true;
+      if ((await countUnitsUnder(path.join(abs, e.name))) > 0) return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -235,10 +249,10 @@ async function discoverUnitsUncached(root: string): Promise<DiscoveredUnit[]> {
       return;
     }
     for (const envEnt of envEntries) {
+      // Every non-skip directory under a cloud is an environment (folder-based).
       if (!envEnt.isDirectory() || SKIP_DIRS.has(envEnt.name) || envEnt.name.startsWith('.')) {
         continue;
       }
-      if (!looksLikeEnv(envEnt.name)) continue;
       const envDir = path.join(cloudRoot, envEnt.name);
       const walk = async (d: string) => {
         const entries = await fs.readdir(d, { withFileTypes: true });
@@ -362,9 +376,13 @@ export async function listEnvironmentsFromConfig(projectSlug?: string): Promise<
     (a, b) => (ENV_ORDER[a] ?? 50) - (ENV_ORDER[b] ?? 50) || a.localeCompare(b)
   );
 
-  envNames.forEach((slug, i) => {
+  const policies = await listApprovalPolicies();
+  const policyBySlug = new Map(policies.map((p) => [p.slug.toLowerCase(), p]));
+
+  for (const [i, slug] of envNames.entries()) {
     const info = byEnv.get(slug)!;
     const isProd = /prod/i.test(slug);
+    const policy = policyBySlug.get(slug.toLowerCase());
     out.push({
       id: projectSlug ? `env-${projectSlug}-${slug}` : `env-${slug}`,
       name: titleCase(slug),
@@ -372,13 +390,15 @@ export async function listEnvironmentsFromConfig(projectSlug?: string): Promise<
       order: ENV_ORDER[slug] ?? 10 + i,
       kind: 'canonical',
       isProduction: isProd,
-      approvalRequired: isProd || /stag/i.test(slug),
+      approvalRequired: policy
+        ? policy.approvalRequired
+        : defaultApprovalRequired(slug),
       unitCount: info.count,
       projects: [...info.projects],
       createdAt: nowIso,
-      updatedAt: nowIso,
+      updatedAt: policy?.updatedAt || nowIso,
     });
-  });
+  }
 
   // Ephemeral clones at config root
   const ephemeralRoot = path.join(root, '.ephemeral');
@@ -400,21 +420,26 @@ export async function listEnvironmentsFromConfig(projectSlug?: string): Promise<
       const expired = now.getTime() > Date.parse(manifest.expiresAt);
       const unitCount = await countUnitsUnder(cloneRoot);
       const label = `${manifest.baseEnv}/${manifest.slug}`;
+      const baseSlug = (manifest.baseEnv || '').toLowerCase();
+      const policy = policyBySlug.get(ent.name.toLowerCase()) || policyBySlug.get(baseSlug);
+      const approvalRequired = policy
+        ? policy.approvalRequired
+        : defaultApprovalRequired(manifest.baseEnv || ent.name);
       out.push({
         id: `env-ephemeral-${ent.name}`,
         name: expired ? `${label} (expired)` : label,
         slug: ent.name,
         order: order++,
         kind: 'ephemeral',
-        isProduction: false,
-        approvalRequired: false,
+        isProduction: /prod/i.test(manifest.baseEnv || ''),
+        approvalRequired,
         baseEnv: manifest.baseEnv,
         ttl: manifest.ttl,
         expiresAt: manifest.expiresAt,
         expired,
         unitCount,
         createdAt: manifest.createdAt || nowIso,
-        updatedAt: nowIso,
+        updatedAt: policy?.updatedAt || nowIso,
       });
     }
   }
