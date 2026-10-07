@@ -1,4 +1,5 @@
 import type { Infrastructure, TopologyProvider } from '../types/api';
+import { healthFromResourceStatus } from './monitoringService';
 
 /** Build a console-compatible topology view from stored infrastructures. */
 export function buildTopologyFromInfrastructures(
@@ -39,11 +40,7 @@ export function buildTopologyFromInfrastructures(
                 : r.type,
         layer:
           r.type === 'vm' ? 'application' : r.type === 'vpc' || r.type === 'subnet' ? 'network' : 'application',
-        status: (infra.status === 'running' ? 'healthy' : infra.status === 'error' ? 'critical' : 'unknown') as
-          | 'healthy'
-          | 'warning'
-          | 'critical'
-          | 'unknown',
+        status: healthFromResourceStatus(infra.status),
         connections: [] as string[],
         meta: r.cidr ? { cidr: r.cidr } : undefined,
       }));
@@ -62,11 +59,7 @@ export function buildTopologyFromInfrastructures(
           warning: resources.filter((r) => r.status === 'warning').length,
           critical: resources.filter((r) => r.status === 'critical').length,
         },
-        status: (infra.status === 'running'
-          ? 'healthy'
-          : infra.status === 'error'
-            ? 'critical'
-            : 'unknown') as 'healthy' | 'warning' | 'critical' | 'unknown',
+        status: healthFromResourceStatus(infra.status),
       };
     });
 

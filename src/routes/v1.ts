@@ -36,6 +36,12 @@ import type {
 import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
 import { resolveResourceType } from '../services/resourceType';
 import { listAuditEvents, recordAudit } from '../services/auditStore';
+import {
+  getInfraHealth,
+  getInfraMetrics,
+  listInventoryAlerts,
+  listMonitoringDashboards,
+} from '../services/monitoringService';
 
 const router = Router();
 
@@ -731,17 +737,44 @@ router.post('/clusters/:id/scale', (_req, res) => {
   res.status(501).json({ code: 'not_implemented', message: 'Clusters not enabled' });
 });
 
-router.get('/monitoring/alerts', empty);
-router.get('/monitoring/metrics/:infra', (_req, res) => res.json([]));
+router.get('/monitoring/alerts', async (_req, res) => {
+  res.json(await listInventoryAlerts());
+});
+
+router.get('/monitoring/metrics/:infra', async (req, res) => {
+  const series = await getInfraMetrics(req.params.infra);
+  if (!series) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  res.json(series);
+});
+
 router.post('/monitoring/alerts', (_req, res) => {
-  res.status(501).json({ code: 'not_implemented', message: 'Monitoring not enabled' });
+  res.status(501).json({
+    code: 'not_implemented',
+    message: 'Custom alert rules are not enabled; alerts are derived from inventory status',
+  });
 });
+
 router.post('/monitoring/setup/:infra', (_req, res) => {
-  res.status(501).json({ code: 'not_implemented', message: 'Monitoring not enabled' });
+  res.status(501).json({
+    code: 'not_implemented',
+    message: 'External monitoring setup is not enabled; health is served from inventory',
+  });
 });
-router.get('/monitoring/dashboards', empty);
-router.get('/monitoring/health/:infra', (_req, res) => {
-  res.json({ status: 'unknown' });
+
+router.get('/monitoring/dashboards', async (_req, res) => {
+  res.json(await listMonitoringDashboards());
+});
+
+router.get('/monitoring/health/:infra', async (req, res) => {
+  const health = await getInfraHealth(req.params.infra);
+  if (!health) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  res.json(health);
 });
 
 router.get('/apm/services', empty);

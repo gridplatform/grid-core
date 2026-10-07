@@ -1,52 +1,54 @@
-# Install artifacts (self-host)
+# Install
 
-Scripts and Compose for running Grid on a VM or with Docker. Narrative guides:
+Compose, scripts, and systemd units for self-hosting Grid.
 
-→ [grid-docs / docs/install](https://github.com/gridplatform/grid-docs/tree/main/docs/install)
+Guides: [grid-docs / docs/install](https://github.com/gridplatform/grid-docs/tree/main/docs/install)
 
 ## Layout
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | **Default = Compose** on Ubuntu (detached + enable on boot); `GRID_USE_NATIVE=1` for systemd+nginx |
-| `docker-compose.yml` | `core` + `ui` (`restart: unless-stopped`) |
-| `verify.sh` | Smoke-check `/health` + UI |
-| `.env.example` | Auth, GitOps, **remote state (`GRID_TF_*`)** |
-| `systemd/grid-compose.service` | Bring Compose stack up on reboot |
-| `systemd/grid-core.service` | Native API unit (`Restart=always`) |
-| `systemd/grid-ui.service` | Optional (nginx preferred) |
-| `nginx-host.conf` | Native: UI static + `/api` → core |
-| `../Dockerfile` | Core image (bundles CLI + Terraform) |
+| `install.sh` | Ubuntu installer (Compose by default; `GRID_USE_NATIVE=1` for systemd + nginx) |
+| `docker-compose.yml` | Build `core` and `ui` from source |
+| `docker-compose.release.yml` | Run GHCR images (`lts` / `current` / exact version) |
+| `verify.sh` | Smoke-check `/health` and the UI |
+| `.env.example` | Auth, GitOps, release pins, remote state |
+| `systemd/grid-compose.service` | Start Compose on boot |
+| `systemd/grid-core.service` | Native API unit |
+| `systemd/grid-ui.service` | Optional native UI unit |
+| `nginx-host.conf` | Native reverse proxy |
+| `../Dockerfile` | Core image (CLI + Terraform) |
 
-**Before applying infra:** create remote state (S3 / GCS / Azure) and set `GRID_TF_*` —  
-[remote-state.md](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md).
+Remote state before apply: [remote-state.md](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md).  
+Channels and tags: [releases.md](https://github.com/gridplatform/grid-docs/blob/main/docs/install/releases.md).
 
-## Quick — Docker Compose (also the VM default)
+## Docker Compose
 
 ```bash
 git clone https://github.com/gridplatform/grid-core.git
 cd grid-core
 cp install/.env.example install/.env
-# edit GRID_AUTH_ADMIN_PASSWORD (+ GRID_TF_* for real applies)
+```
+
+Set `GRID_AUTH_ADMIN_PASSWORD`. Then:
+
+```bash
 docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
 bash install/verify.sh
 ```
 
-**Always use `-d` (detached).** Grid must not be tied to your SSH session.
-
-For a server that should survive reboot:
+Use detached mode (`-d`). For reboot persistence:
 
 ```bash
 sudo systemctl enable --now docker
 sudo cp install/systemd/grid-compose.service /etc/systemd/system/
-# if repo is not under /opt/grid/grid-core, edit WorkingDirectory in the unit
 sudo systemctl daemon-reload
 sudo systemctl enable --now grid-compose
 ```
 
-Containers also have `restart: unless-stopped` so they come back after crashes.
+Adjust `WorkingDirectory` in the unit if the repo is not under `/opt/grid/grid-core`.
 
-## Quick — VM one-liner (Compose)
+## VM installer
 
 ```bash
 export GRID_AUTH_ADMIN_PASSWORD='choose-a-strong-password'

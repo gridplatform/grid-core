@@ -1,22 +1,17 @@
-# Grid control plane — build from source.
+# Grid control plane — pre-built images from GHCR.
 #
 #   cp install/.env.example install/.env
-#   docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+#   docker compose -f install/docker-compose.release.yml --env-file install/.env pull
+#   docker compose -f install/docker-compose.release.yml --env-file install/.env up -d
 #
-# Always use detached mode (-d). Services use restart: unless-stopped.
-# Pre-built images: install/docker-compose.release.yml
-# Version pins: GRID_CLI_REF, GRID_UI_REF (see grid-docs releases guide).
+# Image tag: GRID_VERSION if set, otherwise GRID_RELEASE_CHANNEL (default current).
+# Docs: https://github.com/gridplatform/grid-docs/blob/main/docs/install/releases.md
 
 name: grid
 
 services:
   core:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args:
-        GRID_CLI_REF: ${GRID_CLI_REF:-main}
-        TERRAFORM_VERSION: ${TERRAFORM_VERSION:-1.9.8}
+    image: ${GRID_CORE_IMAGE:-ghcr.io/gridplatform/grid-core:${GRID_VERSION:-${GRID_RELEASE_CHANNEL:-current}}}
     env_file:
       - path: .env
         required: false
@@ -59,11 +54,7 @@ services:
       start_period: 40s
 
   ui:
-    build:
-      context: ${GRID_UI_CONTEXT:-https://github.com/gridplatform/grid-ui.git#${GRID_UI_REF:-main}}
-      dockerfile: Dockerfile
-      args:
-        VITE_GRID_API_URL: /api/v1
+    image: ${GRID_UI_IMAGE:-ghcr.io/gridplatform/grid-ui:${GRID_VERSION:-${GRID_RELEASE_CHANNEL:-current}}}
     ports:
       - "${GRID_HTTP_PORT:-80}:80"
     depends_on:
