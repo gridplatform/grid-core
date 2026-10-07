@@ -42,6 +42,7 @@ import {
   listInventoryAlerts,
   listMonitoringDashboards,
 } from '../services/monitoringService';
+import { getSystemVersionInfo } from '../services/systemInfoService';
 
 const router = Router();
 
@@ -114,8 +115,18 @@ async function startLifecycle(
   return deployment;
 }
 
-router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'grid-core' });
+router.get('/health', async (_req, res) => {
+  const info = await getSystemVersionInfo();
+  res.json({
+    status: 'ok',
+    service: 'grid-core',
+    version: info.core.version,
+  });
+});
+
+/** Running component versions for the control plane. */
+router.get('/system/version', async (_req, res) => {
+  res.json(await getSystemVersionInfo());
 });
 
 router.get('/infrastructures', async (req, res) => {
