@@ -24,7 +24,7 @@ GRID_HOME="${GRID_HOME:-/opt/grid}"
 GRID_REF="${GRID_REF:-main}"
 GRID_ORG="${GRID_ORG:-https://github.com/gridplatform}"
 GRID_HTTP_PORT="${GRID_HTTP_PORT:-80}"
-NODE_MAJOR="${NODE_MAJOR:-20}"
+NODE_MAJOR="${NODE_MAJOR:-24}"
 TERRAFORM_VERSION="${TERRAFORM_VERSION:-1.9.8}"
 
 log()  { printf '\n==> %s\n' "$*"; }

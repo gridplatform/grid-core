@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # grid-core + grid-cli + Terraform — control plane image
-FROM node:20-bookworm-slim
+FROM node:24-bookworm-slim
 
 ARG TERRAFORM_VERSION=1.9.8
 ARG GRID_CLI_REPO=https://github.com/gridplatform/grid-cli.git
