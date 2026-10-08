@@ -59,7 +59,10 @@ export function requireRole(...roles: User['role'][]) {
       res.status(401).json({ code: 'unauthorized', message: 'Authentication required' });
       return;
     }
-    if (!roles.includes(user.role)) {
+    // Superadmin satisfies any check that allows admin.
+    const effective = new Set(roles);
+    if (effective.has('admin')) effective.add('superadmin');
+    if (!effective.has(user.role)) {
       res.status(403).json({ code: 'forbidden', message: 'Insufficient permissions' });
       return;
     }

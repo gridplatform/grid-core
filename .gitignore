@@ -2,8 +2,15 @@
 data/
 workspaces/
 .env
+.env.local
+.env.*.local
+.env.production
+.env.development.local
 !.env.example
+!.env.development
+!.env.production.example
 !install/.env.example
+# Note: production settings live in `.env` (from `.env.example`), not `.env.production`.
 node_modules/
 dist/
 *.log

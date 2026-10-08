@@ -1,8 +1,7 @@
-# Grid control plane — pre-built images from GHCR.
+# Grid control plane — production only (pre-built GHCR images).
 #
-#   cp install/.env.example install/.env
-#   docker compose -f install/docker-compose.release.yml --env-file install/.env pull
-#   docker compose -f install/docker-compose.release.yml --env-file install/.env up -d
+#   cp install/.env.example install/.env   # fill every required value
+#   bash install/compose-up.sh release     # runs check-env.sh then compose
 #
 # Image tag: GRID_VERSION if set, otherwise GRID_RELEASE_CHANNEL (default current).
 # Docs: https://github.com/gridplatform/grid-docs/blob/main/docs/install/releases.md
@@ -14,20 +13,21 @@ services:
     image: ${GRID_CORE_IMAGE:-ghcr.io/gridplatform/grid-core:${GRID_VERSION:-${GRID_RELEASE_CHANNEL:-current}}}
     env_file:
       - path: .env
-        required: false
+        required: true
     environment:
       PORT: "3000"
+      GRID_APP_ENV: production
       GRID_CLI_ROOT: /opt/grid/grid-cli
       GRID_DATA_DIR: /var/lib/grid/data
       GRID_WORK_DIR: /var/lib/grid/workspaces
       GRID_CONFIG_ROOT: /var/lib/grid/desired-state
-      GRID_MODULE_BANK: ${GRID_MODULE_BANK:-https://github.com/gridplatform/grid-terraform.git}
-      GRID_MODULE_BANK_REF: ${GRID_MODULE_BANK_REF:-main}
-      GRID_GITOPS_REPO_URL: ${GRID_GITOPS_REPO_URL:-https://github.com/gridplatform/grid-config.git}
-      GRID_GITOPS_BRANCH: ${GRID_GITOPS_BRANCH:-main}
-      GRID_AUTH_ADMIN_EMAIL: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local}
+      GRID_MODULE_BANK: ${GRID_MODULE_BANK:?set GRID_MODULE_BANK in install/.env}
+      GRID_MODULE_BANK_REF: ${GRID_MODULE_BANK_REF:?set GRID_MODULE_BANK_REF=v0.1.0 in install/.env}
+      GRID_GITOPS_REPO_URL: ${GRID_GITOPS_REPO_URL:?set GRID_GITOPS_REPO_URL in install/.env}
+      GRID_GITOPS_BRANCH: ${GRID_GITOPS_BRANCH:?set GRID_GITOPS_BRANCH in install/.env}
+      GRID_AUTH_ADMIN_EMAIL: ${GRID_AUTH_ADMIN_EMAIL:?set GRID_AUTH_ADMIN_EMAIL in install/.env}
       GRID_AUTH_ADMIN_PASSWORD: ${GRID_AUTH_ADMIN_PASSWORD:?set GRID_AUTH_ADMIN_PASSWORD in install/.env}
-      GRID_TF_BACKEND: ${GRID_TF_BACKEND:-local}
+      GRID_TF_BACKEND: ${GRID_TF_BACKEND:?set GRID_TF_BACKEND=s3|gcs|azurerm in install/.env}
       GRID_TF_STATE_BUCKET: ${GRID_TF_STATE_BUCKET:-}
       GRID_TF_LOCK_TABLE: ${GRID_TF_LOCK_TABLE:-}
       GRID_TF_STATE_REGION: ${GRID_TF_STATE_REGION:-}

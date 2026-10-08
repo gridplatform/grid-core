@@ -135,12 +135,45 @@ async function generateTerraform(
   );
 }
 
-/** Resolve Terraform dirs: gitPath → archive/; else workDir/<id>/generated. */
+function slugSegment(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
+
+/**
+ * Derive desired-state relative path (without .json) from infra metadata so
+ * console-created units also land under archive/ next to Git units.
+ */
+function archiveUnitRelFromInfra(infra: Infrastructure): string | null {
+  const cfg = infra.configJson || {};
+  const meta = (cfg.metadata || {}) as { name?: string; environment?: string };
+  const project = slugSegment(infra.project || 'default');
+  const provider = slugSegment(String(infra.provider || cfg.provider || 'aws'));
+  const environment = slugSegment(
+    infra.environment || meta.environment || 'development'
+  );
+  const name = slugSegment(meta.name || infra.name || '');
+  const resources = cfg.resources as Array<{ type?: string }> | undefined;
+  const type = slugSegment(resources?.[0]?.type || 'unit');
+  if (!project || !provider || !environment || !type || !name) return null;
+  return `projects/${project}/${provider}/${environment}/${type}/${name}`;
+}
+
+/**
+ * Resolve Terraform dirs: prefer archive/ (Git path or derived path);
+ * fall back to workDir/<id>/generated only when metadata is incomplete.
+ */
 function resolveTerraformDirs(infra: Infrastructure): {
   configPath: string;
   terraformDir: string;
   writeArchive: boolean;
   configDir?: string;
+  /** When set, persist onto infra so later runs stay on the same path. */
+  derivedGitPath?: string;
 } {
   const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
   if (gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')) {
@@ -152,6 +185,18 @@ function resolveTerraformDirs(infra: Infrastructure): {
       terraformDir,
       writeArchive: true,
       configDir: config.configRoot,
+    };
+  }
+
+  const unitRel = archiveUnitRelFromInfra(infra);
+  if (unitRel) {
+    const derivedGitPath = `${unitRel}.json`;
+    return {
+      configPath: path.join(config.configRoot, derivedGitPath),
+      terraformDir: path.join(config.configRoot, 'archive', unitRel),
+      writeArchive: true,
+      configDir: config.configRoot,
+      derivedGitPath,
     };
   }
 
@@ -184,7 +229,7 @@ async function failDeployment(
 
 /**
  * Regenerate instance Terraform from configJson, then plan/apply/destroy.
- * gitPath units write under GRID_CONFIG_ROOT/archive/; else workDir.
+ * Prefer GRID_CONFIG_ROOT/archive/ (Git path or derived path); workDir is fallback.
  */
 export async function runLifecycle(
   infra: Infrastructure,
@@ -196,11 +241,23 @@ export async function runLifecycle(
   await fs.writeJSON(resolved.configPath, infra.configJson, { spaces: 2 });
   await fs.ensureDir(resolved.terraformDir);
 
+  if (resolved.derivedGitPath && !infra.gitPath) {
+    infra.gitPath = resolved.derivedGitPath;
+    infra.updatedAt = new Date().toISOString();
+    await saveInfrastructure(infra);
+  }
+
   const generatedDir = resolved.terraformDir;
 
   const log = async (line: string) => {
     await appendDeploymentLog(deployment.id, line);
   };
+
+  await log(
+    resolved.writeArchive
+      ? `[grid] Terraform output (archive): ${generatedDir}`
+      : `[grid] Terraform output (workspace scratch): ${generatedDir}`
+  );
 
   const checkpoint = async (mutate: () => void): Promise<boolean> => {
     if (!(await stillActive(deployment))) {

@@ -12,7 +12,9 @@ Guides: [grid-docs / docs/install](https://github.com/gridplatform/grid-docs/tre
 | `docker-compose.yml` | Build `core` and `ui` from source |
 | `docker-compose.release.yml` | Run GHCR images (`lts` / `current` / exact version) |
 | `verify.sh` | Smoke-check `/health` and the UI |
-| `.env.example` | Auth, GitOps, release pins, remote state |
+| `check-env.sh` | Hard-fail if `install/.env` is incomplete (no override) |
+| `compose-up.sh` | Production entry: `check-env.sh` then Compose up |
+| `.env.example` | Auth, GitOps, module bank `v0.1.0`, remote state (required) |
 | `systemd/grid-compose.service` | Start Compose on boot |
 | `systemd/grid-core.service` | Native API unit |
 | `systemd/grid-ui.service` | Optional native UI unit |
@@ -30,10 +32,11 @@ cd grid-core
 cp install/.env.example install/.env
 ```
 
-Set `GRID_AUTH_ADMIN_PASSWORD`. Then:
+Fill **all** required fields (auth, GitOps, `GRID_MODULE_BANK_REF=v0.1.0`, `GRID_TF_BACKEND` + bucket/lock). Compose is **production-only** — no dev profile:
 
 ```bash
-docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
+bash install/compose-up.sh          # check-env + up -d --build
+# bash install/compose-up.sh release
 bash install/verify.sh
 ```
 

@@ -13,10 +13,12 @@ import { checkInfrastructureDrift } from '../services/driftService';
 import { getInfrastructure, listInfrastructures } from '../store/memoryStore';
 import {
   getModuleBankStatus,
+  listModuleBankVersions,
+  saveModuleBankSettings,
   syncModuleBank,
 } from '../services/moduleBankService';
 import type { GitOpsSettings } from '../types/gitops';
-import { getActorEmail, getActorRole } from '../middleware/requireAuth';
+import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
 import { recordAudit } from '../services/auditStore';
 
 const router = Router();
@@ -156,17 +158,77 @@ router.post('/gitops/infrastructures/:id/drift-check', async (req, res) => {
 
 /** Module bank (grid-terraform) — separate from desired-state GitOps. */
 router.get('/module-bank/status', async (_req, res) => {
-  res.json(await getModuleBankStatus());
+  res.json(await getModuleBankStatus({ includeVersions: true }));
+});
+
+router.get('/module-bank/versions', async (_req, res) => {
+  try {
+    const versions = await listModuleBankVersions(true);
+    res.json({ versions, active: (await getModuleBankStatus({ includeVersions: false })).version });
+  } catch (err) {
+    res.status(400).json({
+      code: 'module_bank_versions_error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+const ModuleBankSettingsSchema = z.object({
+  version: z.string().min(1).max(200).optional(),
+  syncIntervalSec: z.number().int().min(0).max(86400).optional(),
+});
+
+/** Admin: set active module bank version and/or auto-sync interval. */
+router.patch('/module-bank/settings', requireRole('admin'), async (req, res) => {
+  try {
+    const body = ModuleBankSettingsSchema.parse(req.body ?? {});
+    if (body.version === undefined && body.syncIntervalSec === undefined) {
+      res.status(400).json({
+        code: 'validation_error',
+        message: 'Provide version and/or syncIntervalSec',
+      });
+      return;
+    }
+    const settings = await saveModuleBankSettings(body);
+    // Sync immediately when version changes so local checkout matches git:: ref.
+    let status = await getModuleBankStatus({ includeVersions: true });
+    if (body.version !== undefined) {
+      status = await syncModuleBank();
+    }
+    await recordAudit({
+      action: 'module_bank.settings',
+      actor: getActorEmail(req),
+      actorRole: getActorRole(req),
+      summary: `Module bank settings updated (version=${settings.version}, interval=${settings.syncIntervalSec}s)`,
+      resourceType: 'module_bank',
+      details: { settings, status: status as unknown as Record<string, unknown> },
+    });
+    res.json({ settings, status });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ code: 'validation_error', message: err.message });
+      return;
+    }
+    res.status(400).json({
+      code: 'module_bank_settings_error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 });
 
 router.post('/module-bank/sync', async (req, res) => {
   try {
+    // Optional body.version — set active version then sync.
+    const body = ModuleBankSettingsSchema.partial().safeParse(req.body ?? {});
+    if (body.success && body.data.version) {
+      await saveModuleBankSettings({ version: body.data.version });
+    }
     const status = await syncModuleBank();
     await recordAudit({
       action: 'module_bank.sync',
       actor: getActorEmail(req),
       actorRole: getActorRole(req),
-      summary: 'Synced module bank (grid-terraform)',
+      summary: `Synced module bank version ${status.version}`,
       resourceType: 'module_bank',
       details: status as unknown as Record<string, unknown>,
     });

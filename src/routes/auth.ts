@@ -15,6 +15,9 @@ import {
 } from '../auth/authService';
 import { getActorEmail, requireRole } from '../middleware/requireAuth';
 import { recordAudit } from '../services/auditStore';
+import { createCustomGroup, listGroups, updateCustomGroupPermissions } from '../store/groupStore';
+import { ACCESS_DOMAIN_CATALOG, ASSIGNABLE_ROLES, PREDEFINED_ACCESS_ROLES } from '../auth/rbac';
+import { resolveAccessByEmail, resolveAccessForUser } from '../services/accessService';
 
 const router = Router();
 
@@ -33,12 +36,13 @@ const CreateUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   name: z.string().min(1).max(120),
-  role: z.enum(['developer', 'maintainer', 'admin']).default('developer'),
+  /** Default: member = no access until admin/superadmin assigns a role or custom group. */
+  role: z.enum(['developer', 'maintainer', 'admin', 'member']).default('member'),
 });
 
 const PatchUserSchema = z.object({
   name: z.string().min(1).max(120).optional(),
-  role: z.enum(['developer', 'maintainer', 'admin']).optional(),
+  role: z.enum(['developer', 'maintainer', 'admin', 'member']).optional(),
   disabled: z.boolean().optional(),
   password: z.string().min(8).optional(),
 });
@@ -51,16 +55,19 @@ function sendAuthError(res: import('express').Response, err: unknown) {
   throw err;
 }
 
-router.get('/auth/me', (req, res) => {
+router.get('/auth/me', async (req, res) => {
   if (config.auth.disabled) {
-    res.json(demoUserAsPublic());
+    const user = demoUserAsPublic();
+    const access = await resolveAccessByEmail(user.email);
+    res.json({ ...user, access });
     return;
   }
   if (!req.gridUser) {
     res.status(401).json({ code: 'unauthorized', message: 'Not authenticated' });
     return;
   }
-  res.json(req.gridUser);
+  const access = await resolveAccessForUser(req.gridUser);
+  res.json({ ...req.gridUser, access });
 });
 
 router.post('/auth/login', async (req, res) => {
@@ -181,7 +188,7 @@ router.post('/auth/users', requireRole('admin'), async (req, res) => {
 router.patch('/auth/users/:id', requireRole('admin'), async (req, res) => {
   try {
     const body = PatchUserSchema.parse(req.body);
-    const user = await adminPatchUser(req.params.id, body);
+    const user = await adminPatchUser(req.params.id, body, req.gridUser);
     if (!user) {
       res.status(404).json({ code: 'not_found', message: 'User not found' });
       return;
@@ -199,6 +206,113 @@ router.patch('/auth/users/:id', requireRole('admin'), async (req, res) => {
     res.json({ user });
   } catch (err) {
     sendAuthError(res, err);
+  }
+});
+
+/** Built-in + custom groups. */
+router.get('/auth/groups', requireRole('admin'), async (_req, res) => {
+  const groups = await listGroups();
+  res.json({
+    groups,
+    assignableRoles: ASSIGNABLE_ROLES,
+    predefinedAccessRoles: PREDEFINED_ACCESS_ROLES,
+    domainCatalog: ACCESS_DOMAIN_CATALOG,
+    accessModel: {
+      levels: {
+        none: 'No access',
+        read: 'Plan / view (UI view-only for observability surfaces)',
+        write: 'Apply / destroy / manage (implies read)',
+      },
+      grantShape: {
+        projects: 'Project slugs or ["*"] for all',
+        environments: 'Environment slugs or ["*"] for all',
+        domains:
+          'Map of domain id → none|read|write (infrastructure, kubernetes, monitoring, apm, logs, topology, secrets, …)',
+      },
+      notes: [
+        'New users start as member (no access).',
+        'Admin or superadmin assigns either a predefined role (developer / maintainer / admin) or a custom group.',
+        'Predefined roles grant global access to all projects, environments, and domains.',
+        'Custom groups use grants: project × environment × domains (extensible catalog).',
+        'Only superadmin may bypass environment approval.',
+        'Write granted via a custom group always requires approval.',
+      ],
+    },
+  });
+});
+
+const AccessLevelSchema = z.enum(['none', 'read', 'write']);
+
+/** Any domain id → level (infrastructure, kubernetes, monitoring, … plus future keys). */
+const DomainMapSchema = z.record(AccessLevelSchema);
+
+const GrantSchema = z.object({
+  projects: z.array(z.string()).min(1),
+  environments: z.array(z.string()).min(1),
+  domains: DomainMapSchema,
+});
+
+const CreateGroupSchema = z.object({
+  slug: z.string().min(1).max(48),
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).optional(),
+  /** Preferred: list of project × environment × domain grants. */
+  grants: z.array(GrantSchema).optional(),
+  /** Shorthand: single grant built from projects + environments + domains. */
+  projects: z.array(z.string()).optional(),
+  environments: z.array(z.string()).optional(),
+  domains: DomainMapSchema.optional(),
+  memberUserIds: z.array(z.string()).optional(),
+});
+
+const PatchGroupSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(500).optional(),
+  grants: z.array(GrantSchema).optional(),
+  projects: z.array(z.string()).optional(),
+  environments: z.array(z.string()).optional(),
+  domains: DomainMapSchema.optional(),
+  memberUserIds: z.array(z.string()).optional(),
+});
+
+router.post('/auth/groups', requireRole('admin'), async (req, res) => {
+  try {
+    const body = CreateGroupSchema.parse(req.body);
+    const group = await createCustomGroup(body);
+    await recordAudit({
+      action: 'auth.group.create',
+      actor: getActorEmail(req),
+      actorRole: req.gridUser?.role,
+      summary: `Created custom group ${group.slug}`,
+      resourceType: 'group',
+      resourceId: group.id,
+      resourceName: group.slug,
+    });
+    res.status(201).json({ group });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ code: 'group_error', message });
+  }
+});
+
+router.patch('/auth/groups/:slug', requireRole('admin'), async (req, res) => {
+  try {
+    const body = PatchGroupSchema.parse(req.body);
+    const group = await updateCustomGroupPermissions(req.params.slug, body);
+    await recordAudit({
+      action: 'auth.group.update',
+      actor: getActorEmail(req),
+      actorRole: req.gridUser?.role,
+      summary: `Updated group ${group.slug}`,
+      resourceType: 'group',
+      resourceId: group.id,
+      resourceName: group.slug,
+    });
+    res.json({ group });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = message.includes('not found') ? 404 : 400;
+    res.status(code).json({ code: code === 404 ? 'not_found' : 'group_error', message });
   }
 });
 

@@ -291,7 +291,11 @@ async function enqueueInfrastructureRelease(
     });
     return;
   }
-  if (mode === 'destroy' && req.gridUser?.role !== 'admin') {
+  if (
+    mode === 'destroy' &&
+    req.gridUser?.role !== 'admin' &&
+    req.gridUser?.role !== 'superadmin'
+  ) {
     res.status(403).json({
       code: 'forbidden',
       message: 'Only admins can destroy infrastructure',
@@ -698,7 +702,11 @@ router.post('/releases', async (req, res) => {
     res.status(400).json({ code: 'validation_error', message: parsed.error.message });
     return;
   }
-  if (parsed.data.mode === 'destroy' && req.gridUser?.role !== 'admin') {
+  if (
+    parsed.data.mode === 'destroy' &&
+    req.gridUser?.role !== 'admin' &&
+    req.gridUser?.role !== 'superadmin'
+  ) {
     res.status(403).json({
       code: 'forbidden',
       message: 'Only admins can create destroy releases',
@@ -748,7 +756,7 @@ router.get('/approvals', async (_req, res) => {
 
 router.post(
   '/approvals/:id/approve',
-  requireRole('maintainer', 'admin'),
+  requireRole('maintainer', 'admin', 'superadmin'),
   async (req, res) => {
     try {
       const comment =
@@ -772,7 +780,7 @@ router.post(
 
 router.post(
   '/approvals/:id/reject',
-  requireRole('maintainer', 'admin'),
+  requireRole('maintainer', 'admin', 'superadmin'),
   async (req, res) => {
     try {
       const comment =

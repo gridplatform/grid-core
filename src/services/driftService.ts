@@ -28,7 +28,19 @@ function runCapture(
 }
 
 async function ensureGenerated(infra: Infrastructure, generatedDir: string): Promise<number> {
-  const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
+  // Prefer the same archive/ layout as lifecycle (gitPath or derived metadata).
+  let gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!gitPath) {
+    const cfg = infra.configJson || {};
+    const meta = (cfg.metadata || {}) as { name?: string; environment?: string };
+    const project = (infra.project || 'default').toLowerCase();
+    const provider = String(infra.provider || cfg.provider || 'aws').toLowerCase();
+    const environment = (infra.environment || meta.environment || 'development').toLowerCase();
+    const name = (meta.name || infra.name || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+    const resources = cfg.resources as Array<{ type?: string }> | undefined;
+    const type = (resources?.[0]?.type || 'unit').toLowerCase();
+    if (name) gitPath = `projects/${project}/${provider}/${environment}/${type}/${name}.json`;
+  }
   const writeArchive = Boolean(
     gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')
   );

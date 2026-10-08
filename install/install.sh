@@ -11,6 +11,9 @@
 #   GRID_REF=main                 # git ref for core/ui/cli
 #   GRID_AUTH_ADMIN_EMAIL=...
 #   GRID_AUTH_ADMIN_PASSWORD=...  # required for non-interactive; else prompted
+#   GRID_MODULE_BANK_REF=v0.1.0
+#   GRID_GITOPS_REPO_URL=...
+#   GRID_TF_BACKEND=s3|gcs|azurerm (+ bucket/lock) — required (install/check-env.sh)
 #   GRID_USE_NATIVE=1             # systemd + nginx instead of Compose (default is Compose)
 #   GRID_USE_COMPOSE=0            # same as GRID_USE_NATIVE=1 (legacy alias invert)
 #   GRID_SKIP_SYSTEMD=1           # native path: clone+build only
@@ -107,16 +110,17 @@ GRID_HTTP_PORT=${GRID_HTTP_PORT}
 GRID_GITOPS_REPO_URL=${GRID_GITOPS_REPO_URL:-https://github.com/gridplatform/grid-config.git}
 GRID_GITOPS_BRANCH=${GRID_GITOPS_BRANCH:-main}
 GRID_MODULE_BANK=${GRID_MODULE_BANK:-https://github.com/gridplatform/grid-terraform.git}
-GRID_MODULE_BANK_REF=${GRID_MODULE_BANK_REF:-main}
+GRID_MODULE_BANK_REF=${GRID_MODULE_BANK_REF:-v0.1.0}
 GRID_CLI_REF=${GRID_REF}
 PORT=3000
+GRID_APP_ENV=production
 GRID_CLI_ROOT=${GRID_HOME}/grid-cli
 GRID_DATA_DIR=/var/lib/grid/data
 GRID_WORK_DIR=/var/lib/grid/workspaces
 GRID_CONFIG_ROOT=/var/lib/grid/desired-state
 GRID_TERRAFORM_BIN=terraform
-# Remote state — create the store before applying (see grid-docs install/remote-state)
-GRID_TF_BACKEND=${GRID_TF_BACKEND:-local}
+# Remote state — required (see grid-docs install/remote-state)
+GRID_TF_BACKEND=${GRID_TF_BACKEND:-}
 GRID_TF_STATE_BUCKET=${GRID_TF_STATE_BUCKET:-}
 GRID_TF_LOCK_TABLE=${GRID_TF_LOCK_TABLE:-}
 GRID_TF_STATE_REGION=${GRID_TF_STATE_REGION:-}
@@ -143,9 +147,8 @@ install_compose_path() {
   clone_or_update "${GRID_ORG}/grid-core.git" "${GRID_HOME}/grid-core" "$GRID_REF"
   write_env "${GRID_HOME}/grid-core/install/.env"
   cd "${GRID_HOME}/grid-core"
-
-  # -d = detached: not attached to this SSH/terminal session
-  docker compose -f install/docker-compose.yml --env-file install/.env up -d --build --remove-orphans
+  # Production-only: check-env + compose (no skip / no dev profile)
+  bash install/compose-up.sh
 
   # Ensure stack is brought up again after reboot (in addition to container restart policies)
   cp "${GRID_HOME}/grid-core/install/systemd/grid-compose.service" /etc/systemd/system/grid-compose.service
@@ -188,6 +191,7 @@ install_systemd_path() {
   chown -R grid:grid "$GRID_HOME"
 
   write_env /etc/grid/grid.env
+  GRID_ENV_FILE=/etc/grid/grid.env bash "${GRID_HOME}/grid-core/install/check-env.sh"
   # shellcheck disable=SC1091
   set -a; source /etc/grid/grid.env; set +a
 

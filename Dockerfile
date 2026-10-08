@@ -42,13 +42,14 @@ COPY install ./install
 RUN npm run build && npm prune --omit=dev
 
 ENV NODE_ENV=production \
+    GRID_APP_ENV=production \
     PORT=3000 \
     GRID_CLI_ROOT=/opt/grid/grid-cli \
     GRID_DATA_DIR=/var/lib/grid/data \
     GRID_WORK_DIR=/var/lib/grid/workspaces \
     GRID_CONFIG_ROOT=/var/lib/grid/desired-state \
     GRID_MODULE_BANK=https://github.com/gridplatform/grid-terraform.git \
-    GRID_MODULE_BANK_REF=main \
+    GRID_MODULE_BANK_REF=v0.1.0 \
     GRID_TERRAFORM_BIN=terraform
 
 RUN mkdir -p /var/lib/grid/data /var/lib/grid/workspaces /var/lib/grid/desired-state

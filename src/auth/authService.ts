@@ -3,6 +3,7 @@ import { config } from '../config';
 import type { User } from '../types/api';
 import { hashPassword, verifyPassword } from './password';
 import { toPublicUser } from './types';
+import { ASSIGNABLE_ROLES, canManageUsers } from './rbac';
 import {
   createSession,
   deleteSession,
@@ -17,6 +18,7 @@ import {
   updateUser,
   userCount,
 } from '../store/userStore';
+import { ensureDefaultGroups } from '../store/groupStore';
 
 export class AuthError extends Error {
   constructor(
@@ -43,36 +45,50 @@ export function demoUserAsPublic(): User {
   };
 }
 
-/** First-run bootstrap admin (Jenkins-style local user database). */
+/**
+ * First-run bootstrap superadmin (set via GRID_AUTH_ADMIN_* at deploy).
+ * Also upgrades a legacy bootstrap admin → superadmin when email matches.
+ */
 export async function ensureBootstrapAdmin(): Promise<void> {
   await purgeExpiredSessions();
-  const count = await userCount();
-  if (count > 0) return;
-
-  const email = normalizeEmail(
+  const bootstrapEmail = normalizeEmail(
     config.auth.bootstrap.email || 'admin@grid.local'
   );
-  const password =
-    config.auth.bootstrap.password ||
-    crypto.randomBytes(12).toString('base64url');
-  const name = config.auth.bootstrap.name || 'Grid Admin';
 
-  await insertUser({
-    email,
-    name,
-    role: 'admin',
-    passwordHash: await hashPassword(password),
-    disabled: false,
-  });
+  const count = await userCount();
+  if (count === 0) {
+    const password =
+      config.auth.bootstrap.password ||
+      crypto.randomBytes(12).toString('base64url');
+    const name = config.auth.bootstrap.name || 'Grid Superadmin';
 
-  if (config.auth.bootstrap.password) {
-    console.log(`[auth] Bootstrap admin created: ${email}`);
+    await insertUser({
+      email: bootstrapEmail,
+      name,
+      role: 'superadmin',
+      passwordHash: await hashPassword(password),
+      disabled: false,
+    });
+
+    if (config.auth.bootstrap.password) {
+      console.log(`[auth] Bootstrap superadmin created: ${bootstrapEmail}`);
+    } else {
+      console.warn(
+        `[auth] No users found — created bootstrap superadmin ${bootstrapEmail} with one-time password: ${password}`
+      );
+      console.warn(
+        '[auth] Set GRID_AUTH_ADMIN_EMAIL / GRID_AUTH_ADMIN_PASSWORD for a fixed superadmin.'
+      );
+    }
   } else {
-    console.warn(
-      `[auth] No users found — created bootstrap admin ${email} with one-time password: ${password}`
-    );
-    console.warn('[auth] Set GRID_AUTH_ADMIN_EMAIL / GRID_AUTH_ADMIN_PASSWORD for a fixed admin.');
+    const existing = await findUserByEmail(bootstrapEmail);
+    if (existing && existing.role === 'admin') {
+      await updateUser(existing.id, { role: 'superadmin' });
+      console.log(`[auth] Promoted bootstrap user ${bootstrapEmail} to superadmin`);
+    }
   }
+
+  await ensureDefaultGroups();
 }
 
 export async function login(email: string, password: string) {
@@ -122,13 +138,16 @@ export async function registerUser(input: {
     throw new AuthError('weak_password', 'Password must be at least 8 characters', 400);
   }
   try {
+    // New accounts start with no domain access until admin/superadmin assigns
+    // a predefined role (developer / maintainer / admin) or a custom group.
     const user = await insertUser({
       email: input.email,
       name: input.name.trim() || input.email.split('@')[0],
-      role: 'developer',
+      role: 'member',
       passwordHash: await hashPassword(input.password),
       disabled: false,
     });
+    await ensureDefaultGroups();
     return toPublicUser(user);
   } catch (err) {
     if (err instanceof Error && err.message === 'email_taken') {
@@ -147,6 +166,13 @@ export async function adminCreateUser(input: {
   if (input.password.length < 8) {
     throw new AuthError('weak_password', 'Password must be at least 8 characters', 400);
   }
+  if (!ASSIGNABLE_ROLES.includes(input.role)) {
+    throw new AuthError(
+      'invalid_role',
+      'Assignable roles are member (no access), developer, maintainer, and admin. Superadmin is only the bootstrap account.',
+      400
+    );
+  }
   try {
     const user = await insertUser({
       email: input.email,
@@ -155,6 +181,7 @@ export async function adminCreateUser(input: {
       passwordHash: await hashPassword(input.password),
       disabled: false,
     });
+    await ensureDefaultGroups();
     return toPublicUser(user);
   } catch (err) {
     if (err instanceof Error && err.message === 'email_taken') {
@@ -171,8 +198,38 @@ export async function adminListUsers(): Promise<User[]> {
 
 export async function adminPatchUser(
   id: string,
-  patch: { name?: string; role?: User['role']; disabled?: boolean; password?: string }
+  patch: { name?: string; role?: User['role']; disabled?: boolean; password?: string },
+  actor?: User | null
 ): Promise<User | undefined> {
+  const target = await findUserById(id);
+  if (!target) return undefined;
+
+  if (target.role === 'superadmin') {
+    if (patch.role && patch.role !== 'superadmin') {
+      throw new AuthError('forbidden', 'Cannot change the superadmin role', 403);
+    }
+    if (patch.disabled === true) {
+      throw new AuthError('forbidden', 'Cannot disable the superadmin account', 403);
+    }
+  }
+
+  if (patch.role !== undefined) {
+    if (patch.role === 'superadmin') {
+      throw new AuthError(
+        'invalid_role',
+        'Cannot assign superadmin. That role is only the bootstrap account.',
+        400
+      );
+    }
+    if (!ASSIGNABLE_ROLES.includes(patch.role)) {
+      throw new AuthError('invalid_role', 'Invalid role', 400);
+    }
+  }
+
+  if (actor && !canManageUsers(actor.role)) {
+    throw new AuthError('forbidden', 'Insufficient permissions', 403);
+  }
+
   const updates: Parameters<typeof updateUser>[1] = {};
   if (patch.name !== undefined) updates.name = patch.name.trim();
   if (patch.role !== undefined) updates.role = patch.role;
@@ -184,6 +241,7 @@ export async function adminPatchUser(
     updates.passwordHash = await hashPassword(patch.password);
   }
   const updated = await updateUser(id, updates);
+  await ensureDefaultGroups();
   return updated ? toPublicUser(updated) : undefined;
 }
 

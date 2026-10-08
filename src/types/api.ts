@@ -169,9 +169,51 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'developer' | 'maintainer' | 'admin';
+  /**
+   * superadmin — bootstrap only; may bypass env approval; assigns roles/groups
+   * admin — user & policy management; assigns roles/groups; global access; releases follow approval
+   * maintainer — approves releases; global access
+   * developer — requests releases; global access
+   * member — default for new users; **no access** until admin/superadmin assigns a
+   *           predefined role or adds the user to a custom group
+   */
+  role: 'developer' | 'maintainer' | 'admin' | 'superadmin' | 'member';
   avatarUrl?: string;
   createdAt: string;
+}
+
+export type AccessLevel = 'none' | 'read' | 'write';
+
+/** Extensible domain map — infrastructure, kubernetes, monitoring, apm, logs, topology, secrets, … */
+export type DomainPermissionMap = Record<string, AccessLevel>;
+
+export interface GroupAccessGrant {
+  /** Project slugs; `['*']` = all projects. */
+  projects: string[];
+  /** Environment slugs; `['*']` = all environments. */
+  environments: string[];
+  /** Domain → none | read | write within this project×env scope. */
+  domains: DomainPermissionMap;
+}
+
+export interface Group {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  system: boolean;
+  permissions: {
+    alwaysRequireApprovalForWrite: boolean;
+    /** global = built-in roles; grants = custom project×env×domain rows. */
+    scope: 'global' | 'grants';
+    /** When scope=global: domain levels for every project and environment. */
+    domains: DomainPermissionMap;
+    /** When scope=grants: explicit matrix of project × environment × domains. */
+    grants?: GroupAccessGrant[];
+  };
+  memberUserIds: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Environment {

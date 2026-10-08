@@ -22,10 +22,13 @@ import {
   runLifecycle,
 } from './lifecycleService';
 import { killTrackedProcesses, releaseRunKey, trackChildProcess } from './processRegistry';
+import { getApprovalRequired, modeRequiresApprovalGate } from './approvalPolicyStore';
 import {
-  getApprovalRequired,
-  modeRequiresApprovalGate,
-} from './approvalPolicyStore';
+  assertDomainAccess,
+  releaseDomainForMode,
+  requiredLevelForReleaseMode,
+  resolveAccessByEmail,
+} from './accessService';
 
 const ALLOWED_GRID_SUBCOMMANDS = new Set([
   'status',
@@ -259,16 +262,35 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
   }
 
   let infrastructureName: string | undefined;
+  let projectSlug: string | undefined;
   if (input.infrastructureId) {
     const infra = await getInfrastructure(input.infrastructureId);
     if (!infra) throw new Error('Infrastructure not found');
     if (infra.status === 'destroyed') throw new Error('Infrastructure was destroyed');
     infrastructureName = infra.name;
+    projectSlug = infra.project;
   }
 
-  const needsApproval =
+  const accessCtx = { project: projectSlug, environment: input.environment };
+  const access = await resolveAccessByEmail(input.createdBy, accessCtx);
+  if (!access) {
+    throw new Error('Unknown user — cannot create release');
+  }
+
+  const domain = releaseDomainForMode(input.mode);
+  const need = requiredLevelForReleaseMode(input.mode);
+  assertDomainAccess(access, domain, need, `${input.mode} release`, accessCtx);
+
+  const envRequiresApproval =
     modeRequiresApprovalGate(input.mode) &&
     (await getApprovalRequired(input.environment));
+
+  // Superadmin bypasses. Built-in global roles follow per-environment approval policy.
+  // Custom-group write (env-scoped member access) always requires approval.
+  const needsApproval =
+    !access.canBypassApproval &&
+    modeRequiresApprovalGate(input.mode) &&
+    (access.customWriteAlwaysNeedsApproval || envRequiresApproval);
 
   const active = needsApproval ? undefined : await findActiveRelease();
 
@@ -330,7 +352,7 @@ export type ApprovalDecision = {
   id: string;
   releaseId: string;
   status: 'pending' | 'approved' | 'rejected';
-  requiredRole: 'developer' | 'maintainer' | 'admin';
+  requiredRole: 'maintainer' | 'admin' | 'superadmin';
   requestedBy: string;
   requestedAt: string;
   reviewedBy?: string;

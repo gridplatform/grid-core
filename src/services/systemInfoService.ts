@@ -48,8 +48,15 @@ export interface SystemVersionInfo {
     arch: string;
   };
   terraform: { binary: string; version: string | null };
+  appEnv: 'development' | 'production';
   moduleBank: { source: string; ref: string };
   gitops: { branch: string; repoConfigured: boolean };
+  paths: {
+    configRoot: string;
+    archiveRoot: string;
+    workDir: string;
+    dataDir: string;
+  };
 }
 
 export async function getSystemVersionInfo(): Promise<SystemVersionInfo> {
@@ -73,13 +80,30 @@ export async function getSystemVersionInfo(): Promise<SystemVersionInfo> {
       binary: config.terraformBin,
       version: await terraformVersion(),
     },
+    appEnv: config.appEnv,
     moduleBank: {
       source: config.moduleBank,
-      ref: config.moduleBankRef,
+      ref: (() => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { getActiveModuleBankVersion } = require('./moduleBankService') as {
+            getActiveModuleBankVersion: () => string;
+          };
+          return getActiveModuleBankVersion();
+        } catch {
+          return config.moduleBankRef;
+        }
+      })(),
     },
     gitops: {
       branch: config.gitops.branch,
       repoConfigured: Boolean(config.gitops.repoUrl),
+    },
+    paths: {
+      configRoot: config.configRoot,
+      archiveRoot: path.join(config.configRoot, 'archive'),
+      workDir: config.workDir,
+      dataDir: config.dataDir,
     },
   };
 }

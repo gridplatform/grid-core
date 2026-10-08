@@ -18,7 +18,8 @@ GRID_CONFIG_ROOT/                 # demo-infra locally, or clone of your GitHub 
   archive/                         # instance Terraform (CLI/Core regenerate)
     <cloud>/<env>/<type>/<name>/
       main.tf …                    # rewritten from JSON on generate/plan/deploy
-      modules/                     # vendored from GRID_MODULE_BANK (bank never modified)
+      modules/                     # optional — only when GRID_MODULE_SOURCE=copy|link
+                                   # default with git bank: remote git:: sources (no vendor)
 ```
 
 | Mode | `GRID_CONFIG_ROOT` | GitOps |

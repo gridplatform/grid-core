@@ -1,3 +1,4 @@
+import path from 'path';
 import fs from 'fs-extra';
 import { createApp } from './app';
 import { config } from './config';
@@ -9,16 +10,26 @@ import {
 } from './services/gitopsAutoSync';
 import {
   ensureModuleBankPresent,
+  getActiveModuleBankVersion,
+  loadModuleBankSettings,
   moduleBankIsRemote,
   moduleBankLocalPath,
-  startModuleBankAutoSync,
+  restartModuleBankAutoSync,
 } from './services/moduleBankService';
 import { syncGitOpsRepo } from './services/gitopsSyncService';
+import { didLoadEnvFile } from './loadEnv';
+import {
+  assertProductionReady,
+  assertTfBackendConfigOrThrow,
+} from './validateProduction';
 
 async function main() {
   await fs.ensureDir(config.dataDir);
   await fs.ensureDir(config.workDir);
   await fs.ensureDir(config.configRoot);
+
+  // Incomplete GRID_TF_BACKEND=s3|… always fails (generate would break later).
+  assertTfBackendConfigOrThrow();
 
   if (!config.auth.disabled) {
     await ensureBootstrapAdmin();
@@ -26,11 +37,22 @@ async function main() {
     console.warn('[auth] GRID_AUTH_DISABLED — API is open; demo user is used for audit fields.');
   }
 
-  // Module bank: clone once onto disk/PVC; generate uses this path (no per-request fetch).
+  // Module bank: load admin version settings, ensure checkout, start auto-sync.
+  const mbSettings = await loadModuleBankSettings();
+
+  // Production: require .env + remote state + git module bank @ release tag (e.g. v0.1.0).
+  if (config.isProduction) {
+    assertProductionReady({
+      envFileLoaded: didLoadEnvFile(),
+      moduleBankVersion: mbSettings.version,
+    });
+  }
+
   try {
     const mb = await ensureModuleBankPresent();
     console.log(
       `[module-bank] ready at ${mb.localPath}` +
+        ` version=${mbSettings.version}` +
         (mb.lastCommit ? ` @ ${mb.lastCommit.slice(0, 8)}` : '') +
         (mb.remote ? ' (remote checkout)' : ' (local path)')
     );
@@ -44,12 +66,15 @@ async function main() {
   const app = createApp();
   app.listen(config.port, () => {
     console.log(`grid-core listening on http://localhost:${config.port}`);
+    console.log(`App env:       ${config.appEnv} (${config.isDevelopment ? 'npm run dev' : 'npm run prod / start'})`);
     console.log(`CLI root:      ${config.cliRoot}`);
     console.log(`Config root:   ${config.configRoot}`);
+    console.log(`Archive TF:    ${path.join(config.configRoot, 'archive')}  ← generated Terraform for Git units`);
     console.log(`Module bank:   ${config.moduleBank}`);
     console.log(`Module bank local: ${moduleBankLocalPath()}`);
-    console.log(`Module bank ref: ${config.moduleBankRef}`);
-    console.log(`Work dir:      ${config.workDir}`);
+    console.log(`Module bank version: ${getActiveModuleBankVersion()}`);
+    console.log(`Module bank auto-sync: ${mbSettings.syncIntervalSec}s`);
+    console.log(`Work dir:      ${config.workDir}  ← scratch TF for API-only units`);
     if (config.gitops.repoUrl) {
       console.log(`GitOps remote: ${config.gitops.repoUrl} (${config.gitops.branch})`);
     }
@@ -61,8 +86,8 @@ async function main() {
     }
   });
 
-  if (moduleBankIsRemote() && config.moduleBankSyncIntervalSec > 0) {
-    startModuleBankAutoSync(config.moduleBankSyncIntervalSec);
+  if (moduleBankIsRemote()) {
+    restartModuleBankAutoSync();
   }
 
   // Ensure desired-state tree exists (clone if empty + remote configured).
