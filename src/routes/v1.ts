@@ -41,6 +41,15 @@ import type {
   LifecycleMode,
 } from '../types/api';
 import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
+import {
+  accessForRequest,
+  assertInfrastructureAccess,
+  filterEnvironmentsByAccess,
+  filterInfrastructuresByAccess,
+  filterProjectsByAccess,
+} from '../services/accessFilter';
+import { canAccessWorkspacePair } from '../services/accessService';
+import { sendError } from '../lib/httpError';
 import { resolveResourceType } from '../services/resourceType';
 import { listAuditEvents, recordAudit } from '../services/auditStore';
 import {
@@ -155,14 +164,18 @@ router.get('/infrastructures', async (req, res) => {
       ? req.query.environment.trim()
       : undefined;
 
+  const access = await accessForRequest(req);
   const items = await listInfrastructures();
   // Config-backed units + stale (removed from config, still in state). Never list destroyed orphans.
+  const scoped = access ? filterInfrastructuresByAccess(access, items) : items;
   res.json(
-    items
+    scoped
       .filter((i) => i.status !== 'destroyed')
       .filter((i) => {
-        if (project && (i.project || 'demo-app') !== project) return false;
-        if (environment && i.environment !== environment) return false;
+        if (project && (i.project || '').toLowerCase() !== project.toLowerCase()) return false;
+        if (environment && i.environment.toLowerCase() !== environment.toLowerCase()) {
+          return false;
+        }
         return true;
       })
       .map((i) => toListItem(i))
@@ -176,7 +189,12 @@ router.get('/infrastructures/:id', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  res.json(infra);
+  try {
+    await assertInfrastructureAccess(req, infra);
+    res.json(infra);
+  } catch (err) {
+    sendError(res, err);
+  }
 });
 
 router.post('/infrastructures', async (req, res) => {
@@ -303,6 +321,7 @@ async function enqueueInfrastructureRelease(
     return;
   }
   try {
+    await assertInfrastructureAccess(req, infra);
     const release = await enqueueRelease({
       name: `${infra.name} (${mode})`,
       environment: infra.environment,
@@ -312,10 +331,7 @@ async function enqueueInfrastructureRelease(
     });
     res.status(201).json(release);
   } catch (err) {
-    res.status(400).json({
-      code: 'release_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 }
 
@@ -337,6 +353,7 @@ router.post('/infrastructures/:id/restore-config', async (req, res) => {
     return;
   }
   try {
+    await assertInfrastructureAccess(req, infra);
     const restored = await restoreInfrastructureToConfig(infra);
     await recordAudit({
       action: 'infra.restore_config',
@@ -350,10 +367,7 @@ router.post('/infrastructures/:id/restore-config', async (req, res) => {
     });
     res.json(restored);
   } catch (err) {
-    res.status(500).json({
-      code: 'restore_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
@@ -369,6 +383,7 @@ router.post('/infrastructures/:id/drift-check', async (req, res) => {
     return;
   }
   try {
+    await assertInfrastructureAccess(req, infra);
     const { checkInfrastructureDrift } = await import('../services/driftService');
     const report = await checkInfrastructureDrift(infra);
     await recordAudit({
@@ -383,10 +398,7 @@ router.post('/infrastructures/:id/drift-check', async (req, res) => {
     });
     res.json(report);
   } catch (err) {
-    res.status(500).json({
-      code: 'drift_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
@@ -396,12 +408,17 @@ router.post('/infrastructures/:id/clone', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  const clone = await createInfrastructure({
-    ...infra,
-    name: `${infra.name}-clone`,
-    status: 'pending',
-  });
-  res.status(201).json(clone);
+  try {
+    await assertInfrastructureAccess(req, infra);
+    const clone = await createInfrastructure({
+      ...infra,
+      name: `${infra.name}-clone`,
+      status: 'pending',
+    });
+    res.status(201).json(clone);
+  } catch (err) {
+    sendError(res, err);
+  }
 });
 
 /** DELETE enqueues a destroy release (admin only) */
@@ -636,20 +653,24 @@ router.post('/deployments/:id/retry', async (req, res) => {
   res.status(202).json(next);
 });
 
-router.get('/topology/providers', async (_req, res) => {
+router.get('/topology/providers', async (req, res) => {
   const existing = await listInfrastructures();
   if (existing.length === 0) {
     await syncInfrastructuresFromConfigRoot({ force: true });
   } else {
     void syncInfrastructuresFromConfigRoot();
   }
-  const items = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
+  const access = await accessForRequest(req);
+  const raw = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
+  const items = access ? filterInfrastructuresByAccess(access, raw) : raw;
   res.json(buildTopologyFromInfrastructures(items));
 });
 
 router.get('/topology/providers/:id/vpcs', async (req, res) => {
   void syncInfrastructuresFromConfigRoot();
-  const items = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
+  const access = await accessForRequest(req);
+  const raw = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
+  const items = access ? filterInfrastructuresByAccess(access, raw) : raw;
   const providers = buildTopologyFromInfrastructures(items);
   const provider = providers.find((p) => p.id === req.params.id);
   res.json(provider?.vpcs || []);
@@ -657,7 +678,9 @@ router.get('/topology/providers/:id/vpcs', async (req, res) => {
 
 router.get('/topology/vpcs/:id/resources', async (req, res) => {
   void syncInfrastructuresFromConfigRoot();
-  const items = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
+  const access = await accessForRequest(req);
+  const raw = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
+  const items = access ? filterInfrastructuresByAccess(access, raw) : raw;
   const providers = buildTopologyFromInfrastructures(items);
   for (const p of providers) {
     const vpc = p.vpcs.find((v) => v.id === req.params.id);
@@ -683,8 +706,27 @@ const CreateReleaseSchema = z.object({
   customCommand: z.string().optional(),
 });
 
-router.get('/releases', async (_req, res) => {
-  res.json(await listReleases());
+router.get('/releases', async (req, res) => {
+  const access = await accessForRequest(req);
+  let items = await listReleases();
+  if (access && access.workspace.mode !== 'global') {
+    const infras = await listInfrastructures();
+    const byId = new Map(infras.map((i) => [i.id, i]));
+    items = items.filter((r) => {
+      if (r.infrastructureId) {
+        const infra = byId.get(r.infrastructureId);
+        if (infra) {
+          return canAccessWorkspacePair(
+            access.workspace,
+            infra.project,
+            infra.environment
+          );
+        }
+      }
+      return filterEnvironmentsByAccess(access, [{ slug: r.environment }]).length > 0;
+    });
+  }
+  res.json(items);
 });
 
 router.get('/releases/:id', async (req, res) => {
@@ -693,7 +735,30 @@ router.get('/releases/:id', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Release not found' });
     return;
   }
-  res.json(release);
+  try {
+    const access = await accessForRequest(req);
+    if (access && access.workspace.mode !== 'global') {
+      if (release.infrastructureId) {
+        const infra = await getInfrastructure(release.infrastructureId);
+        if (infra) {
+          await assertInfrastructureAccess(req, infra);
+        } else if (
+          filterEnvironmentsByAccess(access, [{ slug: release.environment }]).length === 0
+        ) {
+          res.status(403).json({ code: 'forbidden', message: 'No access to this release' });
+          return;
+        }
+      } else if (
+        filterEnvironmentsByAccess(access, [{ slug: release.environment }]).length === 0
+      ) {
+        res.status(403).json({ code: 'forbidden', message: 'No access to this release' });
+        return;
+      }
+    }
+    res.json(release);
+  } catch (err) {
+    sendError(res, err);
+  }
 });
 
 router.post('/releases', async (req, res) => {
@@ -720,10 +785,7 @@ router.post('/releases', async (req, res) => {
     });
     res.status(201).json(release);
   } catch (err) {
-    res.status(400).json({
-      code: 'release_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
@@ -860,7 +922,13 @@ router.get('/environments', async (req, res) => {
     typeof req.query.project === 'string' && req.query.project.trim()
       ? req.query.project.trim()
       : undefined;
-  res.json(await listEnvironmentsFromConfig(project));
+  const access = await accessForRequest(req);
+  if (access && project && !filterProjectsByAccess(access, [{ slug: project }]).length) {
+    res.json([]);
+    return;
+  }
+  const envs = await listEnvironmentsFromConfig(project);
+  res.json(access ? filterEnvironmentsByAccess(access, envs, project) : envs);
 });
 
 /** Admin: set whether apply/destroy/custom releases for an env require approval. */
@@ -912,8 +980,10 @@ router.patch(
   }
 );
 
-router.get('/projects', async (_req, res) => {
-  res.json(await listProjectsFromConfig());
+router.get('/projects', async (req, res) => {
+  const access = await accessForRequest(req);
+  const projects = await listProjectsFromConfig();
+  res.json(access ? filterProjectsByAccess(access, projects) : projects);
 });
 
 /** Lightweight search across projects / environments / infrastructures */
@@ -926,11 +996,19 @@ router.get('/search', async (req, res) => {
     return;
   }
   void syncInfrastructuresFromConfigRoot();
-  const [projects, environments, infrastructures] = await Promise.all([
+  const access = await accessForRequest(req);
+  const [projectsRaw, environmentsRaw, infrastructuresRaw] = await Promise.all([
     listProjectsFromConfig(),
     listEnvironmentsFromConfig(),
     listInfrastructures(),
   ]);
+  const projects = access ? filterProjectsByAccess(access, projectsRaw) : projectsRaw;
+  const environments = access
+    ? filterEnvironmentsByAccess(access, environmentsRaw)
+    : environmentsRaw;
+  const infrastructures = access
+    ? filterInfrastructuresByAccess(access, infrastructuresRaw)
+    : infrastructuresRaw;
   res.json({
     projects: projects.filter(
       (p) =>

@@ -7,6 +7,7 @@ import v1 from './routes/v1';
 import gitops from './routes/gitops';
 import auth from './routes/auth';
 import { attachAuth } from './middleware/requireAuth';
+import { isHttpError } from './lib/httpError';
 
 export function createApp() {
   const app = express();
@@ -34,8 +35,19 @@ export function createApp() {
       res: express.Response,
       _next: express.NextFunction
     ) => {
+      if (isHttpError(err)) {
+        res.status(err.status).json({
+          code: err.code,
+          message: err.message,
+          ...(err.details ? { details: err.details } : {}),
+        });
+        return;
+      }
       console.error(err);
-      res.status(500).json({ code: 'internal_error', message: err.message });
+      res.status(500).json({
+        code: 'internal_error',
+        message: err.message || 'Internal error',
+      });
     }
   );
 

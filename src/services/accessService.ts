@@ -11,8 +11,10 @@ import {
   type AccessLevel,
   type AccessDomain,
   type DomainPermissionMap,
+  type GroupAccessGrant,
   type UserRole,
 } from '../auth/rbac';
+import { AccessError } from '../lib/httpError';
 import { ensureDefaultGroups, listGroups } from '../store/groupStore';
 import { findUserByEmail, findUserById } from '../store/userStore';
 import { config } from '../config';
@@ -20,6 +22,23 @@ import { config } from '../config';
 export interface AccessContext {
   project?: string;
   environment?: string;
+}
+
+/**
+ * Workspace visibility derived from role + custom group grants.
+ * - global: every project / environment
+ * - grants: only the project×env pairs listed on custom groups
+ */
+export interface WorkspaceAccess {
+  mode: 'global' | 'grants';
+  /** `['*']` or concrete project slugs (lowercase). */
+  projects: string[];
+  /**
+   * Environments allowed for a project slug.
+   * Key `*` = grant that applies to all projects.
+   * Value `['*']` = all environments under that project key.
+   */
+  environments: Record<string, string[]>;
 }
 
 export interface EffectiveAccess {
@@ -35,6 +54,8 @@ export interface EffectiveAccess {
    */
   customWriteAlwaysNeedsApproval: boolean;
   scope: 'global' | 'grants' | 'mixed';
+  /** Project / environment visibility (drives list APIs + UI picker). */
+  workspace: WorkspaceAccess;
   canApprove: boolean;
   canBypassApproval: boolean;
   canManageUsers: boolean;
@@ -48,17 +69,110 @@ function emptyDomains(): DomainPermissionMap {
   return out;
 }
 
+function norm(value: string | undefined | null): string {
+  return (value || '').trim().toLowerCase();
+}
+
+function globalWorkspace(): WorkspaceAccess {
+  return { mode: 'global', projects: ['*'], environments: { '*': ['*'] } };
+}
+
+function emptyWorkspace(): WorkspaceAccess {
+  return { mode: 'grants', projects: [], environments: {} };
+}
+
+function mergeEnvLists(a: string[] | undefined, b: string[]): string[] {
+  if (a?.includes('*') || b.includes('*')) return ['*'];
+  return [...new Set([...(a || []), ...b].map(norm).filter(Boolean))];
+}
+
+/** Build project×env visibility from custom-group grants (dynamic — no hardcoding). */
+export function workspaceFromGrants(grants: GroupAccessGrant[]): WorkspaceAccess {
+  if (!grants.length) return emptyWorkspace();
+
+  let allProjects = false;
+  const projects = new Set<string>();
+  const environments: Record<string, string[]> = {};
+
+  for (const grant of grants) {
+    const projKeys = grant.projects.includes('*')
+      ? ['*']
+      : grant.projects.map(norm).filter(Boolean);
+    const envKeys = grant.environments.includes('*')
+      ? ['*']
+      : grant.environments.map(norm).filter(Boolean);
+
+    if (projKeys.includes('*')) {
+      allProjects = true;
+      environments['*'] = mergeEnvLists(environments['*'], envKeys);
+      continue;
+    }
+
+    for (const p of projKeys) {
+      projects.add(p);
+      environments[p] = mergeEnvLists(environments[p], envKeys);
+    }
+  }
+
+  return {
+    mode: 'grants',
+    projects: allProjects ? ['*'] : [...projects],
+    environments,
+  };
+}
+
+export function canAccessProject(
+  workspace: WorkspaceAccess,
+  projectSlug: string | undefined | null
+): boolean {
+  if (workspace.mode === 'global' || workspace.projects.includes('*')) return true;
+  const p = norm(projectSlug);
+  if (!p) return false;
+  return workspace.projects.includes(p);
+}
+
+export function canAccessEnvironment(
+  workspace: WorkspaceAccess,
+  projectSlug: string | undefined | null,
+  environmentSlug: string | undefined | null
+): boolean {
+  if (workspace.mode === 'global') return true;
+  if (!canAccessProject(workspace, projectSlug)) return false;
+
+  const env = norm(environmentSlug);
+  if (!env) return false;
+
+  const p = norm(projectSlug);
+  const fromStar = workspace.environments['*'] || [];
+  const fromProject = p ? workspace.environments[p] || [] : [];
+  const allowed = mergeEnvLists(fromStar, fromProject);
+  if (!allowed.length) return false;
+  return allowed.includes('*') || allowed.includes(env);
+}
+
+/** Unit / resource visibility for list APIs. */
+export function canAccessWorkspacePair(
+  workspace: WorkspaceAccess,
+  projectSlug: string | undefined | null,
+  environmentSlug: string | undefined | null
+): boolean {
+  return canAccessEnvironment(workspace, projectSlug, environmentSlug);
+}
+
 function demoAccess(ctx?: AccessContext): EffectiveAccess {
   const role = config.demoUser.role;
   const perms = permissionsForRole(role);
   const domains = { ...perms.domains };
+  const workspace =
+    perms.scope === 'global' ? globalWorkspace() : emptyWorkspace();
   return {
     role,
     domains,
     infrastructure: domainLevel(domains, 'infrastructure'),
     kubernetes: domainLevel(domains, 'kubernetes'),
     customWriteAlwaysNeedsApproval: false,
-    scope: 'global',
+    scope: workspace.mode === 'global' ? 'global' : 'grants',
+    workspace,
     canApprove: canApproveReleases(role),
     canBypassApproval: canBypassApproval(role),
     canManageUsers: canManageUsers(role),
@@ -68,6 +182,10 @@ function demoAccess(ctx?: AccessContext): EffectiveAccess {
 
 function hasWrite(domains: DomainPermissionMap): boolean {
   return Object.values(domains).some((level) => level === 'write');
+}
+
+function hasAnyDomainAccess(domains: DomainPermissionMap): boolean {
+  return Object.values(domains).some((level) => level === 'read' || level === 'write');
 }
 
 /**
@@ -93,6 +211,15 @@ export async function resolveAccessForUser(
     (g) => !g.system && user.id && g.memberUserIds.includes(user.id)
   );
 
+  const allGrants: GroupAccessGrant[] = [];
+  for (const g of memberGroups) {
+    if (g.permissions.scope === 'grants' && g.permissions.grants?.length) {
+      allGrants.push(...g.permissions.grants);
+    }
+  }
+
+  const workspace = roleIsGlobal ? globalWorkspace() : workspaceFromGrants(allGrants);
+
   let fromGrants = emptyDomains();
   let customWriteInContext = false;
 
@@ -103,7 +230,8 @@ export async function resolveAccessForUser(
     for (const grant of p.grants) {
       const matched = grantDomainsForContext(grant, ctx?.project, ctx?.environment);
       if (!matched) {
-        // Without a specific context, union all grant domains for /auth/me overview.
+        // Without a specific context, union grant domains only for nav overview —
+        // and only when the grant itself has some non-none domain.
         if (!ctx?.project && !ctx?.environment) {
           fromGrants = mergeDomainMaps(fromGrants, grant.domains);
           if (p.alwaysRequireApprovalForWrite && hasWrite(grant.domains)) {
@@ -119,11 +247,19 @@ export async function resolveAccessForUser(
     }
   }
 
+  // Grant-scoped users with an explicit project/env that is NOT in workspace get none.
+  if (
+    !roleIsGlobal &&
+    (ctx?.project || ctx?.environment) &&
+    !canAccessWorkspacePair(workspace, ctx?.project, ctx?.environment)
+  ) {
+    fromGrants = emptyDomains();
+    customWriteInContext = false;
+  }
+
   const domains = roleIsGlobal
     ? mergeDomainMaps(roleDomains, fromGrants)
-    : ctx?.project || ctx?.environment
-      ? fromGrants
-      : fromGrants;
+    : fromGrants;
 
   const roleAlreadyWrites = roleIsGlobal && hasWrite(roleDomains);
   const customWriteAlwaysNeedsApproval = !roleAlreadyWrites && customWriteInContext;
@@ -142,6 +278,7 @@ export async function resolveAccessForUser(
     kubernetes: domainLevel(domains, 'kubernetes'),
     customWriteAlwaysNeedsApproval,
     scope,
+    workspace,
     canApprove: canApproveReleases(user.role),
     canBypassApproval: canBypassApproval(user.role),
     canManageUsers: canManageUsers(user.role),
@@ -183,6 +320,22 @@ export function assertDomainAccess(
   actionLabel: string,
   ctx?: AccessContext
 ): void {
+  if (
+    ctx &&
+    (ctx.project || ctx.environment) &&
+    !canAccessWorkspacePair(access.workspace, ctx.project, ctx.environment)
+  ) {
+    throw new AccessError(
+      `No access to ${[
+        ctx.project && `project “${ctx.project}”`,
+        ctx.environment && `environment “${ctx.environment}”`,
+      ]
+        .filter(Boolean)
+        .join(', ')} for ${actionLabel}`,
+      { project: ctx.project, environment: ctx.environment, action: actionLabel }
+    );
+  }
+
   const level = domainLevel(access.domains, domain);
   if (!accessAtLeast(level, need)) {
     const where = [
@@ -192,8 +345,16 @@ export function assertDomainAccess(
       .filter(Boolean)
       .join(', ');
     const hint = where ? ` (${where})` : '';
-    throw new Error(
-      `Insufficient ${domain} permission for ${actionLabel}${hint} (have ${level}, need ${need})`
+    throw new AccessError(
+      `Insufficient ${domain} permission for ${actionLabel}${hint} (have ${level}, need ${need})`,
+      {
+        domain,
+        have: level,
+        need,
+        project: ctx?.project,
+        environment: ctx?.environment,
+        action: actionLabel,
+      }
     );
   }
 }
@@ -201,4 +362,10 @@ export function assertDomainAccess(
 export function releaseDomainForMode(_mode: string, releaseType?: string): AccessDomain {
   if (releaseType === 'kubernetes') return 'kubernetes';
   return 'infrastructure';
+}
+
+/** Whether the user has any product-domain access at all (nav overview). */
+export function hasProductAccess(access: EffectiveAccess): boolean {
+  if (access.workspace.mode === 'global') return true;
+  return hasAnyDomainAccess(access.domains);
 }

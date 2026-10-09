@@ -274,7 +274,8 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
   const accessCtx = { project: projectSlug, environment: input.environment };
   const access = await resolveAccessByEmail(input.createdBy, accessCtx);
   if (!access) {
-    throw new Error('Unknown user — cannot create release');
+    const { AccessError } = await import('../lib/httpError');
+    throw new AccessError('Unknown user — cannot create release');
   }
 
   const domain = releaseDomainForMode(input.mode);

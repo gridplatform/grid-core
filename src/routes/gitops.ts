@@ -20,6 +20,12 @@ import {
 import type { GitOpsSettings } from '../types/gitops';
 import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
 import { recordAudit } from '../services/auditStore';
+import {
+  accessForRequest,
+  assertInfrastructureAccess,
+  filterInfrastructuresByAccess,
+} from '../services/accessFilter';
+import { sendError } from '../lib/httpError';
 
 const router = Router();
 
@@ -31,10 +37,12 @@ const SettingsSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
-router.get('/gitops/status', async (_req, res) => {
+router.get('/gitops/status', async (req, res) => {
   const status = await loadGitOpsRuntime();
+  const access = await accessForRequest(req);
   const items = await listInfrastructures();
-  const gitTracked = items.filter((i) => !!i.gitPath);
+  const scoped = access ? filterInfrastructuresByAccess(access, items) : items;
+  const gitTracked = scoped.filter((i) => !!i.gitPath);
   res.json({
     ...status,
     trackedCount: gitTracked.length,
@@ -55,7 +63,7 @@ router.get('/gitops/settings', async (_req, res) => {
   res.json((await loadGitOpsSettings()) || null);
 });
 
-router.put('/gitops/settings', async (req, res) => {
+router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ code: 'validation_error', message: parsed.error.message });
@@ -87,7 +95,7 @@ router.put('/gitops/settings', async (req, res) => {
   res.json(settings);
 });
 
-router.post('/gitops/sync', async (req, res) => {
+router.post('/gitops/sync', requireRole('admin'), async (req, res) => {
   try {
     const result = await syncGitOpsRepo({ ifBusy: 'fail' });
     if (!result) {
@@ -122,10 +130,7 @@ router.post('/gitops/sync', async (req, res) => {
       });
       return;
     }
-    res.status(400).json({
-      code: 'gitops_sync_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
@@ -136,6 +141,7 @@ router.post('/gitops/infrastructures/:id/drift-check', async (req, res) => {
     return;
   }
   try {
+    await assertInfrastructureAccess(req, infra);
     const report = await checkInfrastructureDrift(infra);
     await recordAudit({
       action: 'infra.drift_check',
@@ -149,10 +155,7 @@ router.post('/gitops/infrastructures/:id/drift-check', async (req, res) => {
     });
     res.json(report);
   } catch (err) {
-    res.status(500).json({
-      code: 'drift_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
@@ -166,10 +169,7 @@ router.get('/module-bank/versions', async (_req, res) => {
     const versions = await listModuleBankVersions(true);
     res.json({ versions, active: (await getModuleBankStatus({ includeVersions: false })).version });
   } catch (err) {
-    res.status(400).json({
-      code: 'module_bank_versions_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
@@ -209,14 +209,11 @@ router.patch('/module-bank/settings', requireRole('admin'), async (req, res) => 
       res.status(400).json({ code: 'validation_error', message: err.message });
       return;
     }
-    res.status(400).json({
-      code: 'module_bank_settings_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
-router.post('/module-bank/sync', async (req, res) => {
+router.post('/module-bank/sync', requireRole('admin'), async (req, res) => {
   try {
     // Optional body.version — set active version then sync.
     const body = ModuleBankSettingsSchema.partial().safeParse(req.body ?? {});
@@ -242,10 +239,7 @@ router.post('/module-bank/sync', async (req, res) => {
       resourceType: 'module_bank',
       outcome: 'failure',
     });
-    res.status(400).json({
-      code: 'module_bank_sync_error',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    sendError(res, err);
   }
 });
 
