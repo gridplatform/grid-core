@@ -22,6 +22,7 @@ import {
   assertProductionReady,
   assertTfBackendConfigOrThrow,
 } from './validateProduction';
+import { assertArchiveMirrorReady } from './services/archiveMirror';
 
 async function main() {
   await fs.ensureDir(config.dataDir);
@@ -46,6 +47,8 @@ async function main() {
       envFileLoaded: didLoadEnvFile(),
       moduleBankVersion: mbSettings.version,
     });
+    // Hard gate: same state bucket must accept archive/ put+delete (exit buffer).
+    await assertArchiveMirrorReady();
   }
 
   try {
@@ -69,7 +72,10 @@ async function main() {
     console.log(`App env:       ${config.appEnv} (${config.isDevelopment ? 'npm run dev' : 'npm run prod / start'})`);
     console.log(`CLI root:      ${config.cliRoot}`);
     console.log(`Config root:   ${config.configRoot}`);
-    console.log(`Archive TF:    ${path.join(config.configRoot, 'archive')}  ← generated Terraform for Git units`);
+    console.log(`Archive TF:    ${path.join(config.configRoot, 'archive')}  ← local generated Terraform`);
+    if (config.isProduction) {
+      console.log(`Archive mirror: <state-bucket>/archive/…  ← durable exit buffer (same store as TF state)`);
+    }
     console.log(`Module bank:   ${config.moduleBank}`);
     console.log(`Module bank local: ${moduleBankLocalPath()}`);
     console.log(`Module bank version: ${getActiveModuleBankVersion()}`);

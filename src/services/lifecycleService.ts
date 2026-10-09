@@ -11,6 +11,11 @@ import {
   saveInfrastructure,
 } from '../store/memoryStore';
 import { killTrackedProcesses, trackChildProcess } from './processRegistry';
+import {
+  deleteUnitArchiveMirror,
+  isArchiveMirrorEnabled,
+  replaceUnitArchiveMirror,
+} from './archiveMirror';
 
 /** Skip mutating a deployment that was cancelled (superseded by a newer run). */
 async function stillActive(deployment: Deployment): Promise<boolean> {
@@ -172,6 +177,8 @@ function resolveTerraformDirs(infra: Infrastructure): {
   configPath: string;
   terraformDir: string;
   writeArchive: boolean;
+  /** Desired-state relative unit path (no .json) — also used for remote archive/. */
+  unitRelPath?: string;
   configDir?: string;
   /** When set, persist onto infra so later runs stay on the same path. */
   derivedGitPath?: string;
@@ -185,6 +192,7 @@ function resolveTerraformDirs(infra: Infrastructure): {
       configPath,
       terraformDir,
       writeArchive: true,
+      unitRelPath: unitRel,
       configDir: config.configRoot,
     };
   }
@@ -196,6 +204,7 @@ function resolveTerraformDirs(infra: Infrastructure): {
       configPath: path.join(config.configRoot, derivedGitPath),
       terraformDir: path.join(config.configRoot, 'archive', unitRel),
       writeArchive: true,
+      unitRelPath: unitRel,
       configDir: config.configRoot,
       derivedGitPath,
     };
@@ -207,6 +216,79 @@ function resolveTerraformDirs(infra: Infrastructure): {
     terraformDir: path.join(workspace, 'generated'),
     writeArchive: false,
   };
+}
+
+/** Count non-noop resource changes in a saved tfplan (JSON). */
+async function tfplanHasInfrastructureChanges(
+  terraformDir: string,
+  trackKey?: string
+): Promise<boolean> {
+  const show = await captureCommand(
+    config.terraformBin,
+    ['show', '-json', 'tfplan'],
+    terraformDir,
+    async () => undefined,
+    trackKey
+  );
+  if (show.code !== 0 || !show.stdout.trim()) return true; // be safe: treat as changed
+  try {
+    const parsed = JSON.parse(show.stdout) as {
+      resource_changes?: Array<{ change?: { actions?: string[] } }>;
+    };
+    for (const rc of parsed.resource_changes || []) {
+      const a = rc.change?.actions || [];
+      if (a.includes('create') || a.includes('update') || a.includes('delete')) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function mirrorArchiveAfterPlanOrApply(opts: {
+  resolved: ReturnType<typeof resolveTerraformDirs>;
+  log: (line: string) => Promise<void>;
+  reason: string;
+}): Promise<void> {
+  if (!isArchiveMirrorEnabled()) return;
+  if (!opts.resolved.unitRelPath || !opts.resolved.writeArchive) {
+    await opts.log(
+      '[grid] archive mirror: skipped (no archive unit path for this infrastructure)'
+    );
+    return;
+  }
+  try {
+    await opts.log(`[grid] archive mirror: ${opts.reason}`);
+    await replaceUnitArchiveMirror({
+      unitRelPath: opts.resolved.unitRelPath,
+      terraformDir: opts.resolved.terraformDir,
+      log: opts.log,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await opts.log(`[grid] archive mirror FAILED: ${msg}`);
+    throw err;
+  }
+}
+
+async function removeArchiveMirrorAfterDestroy(opts: {
+  resolved: ReturnType<typeof resolveTerraformDirs>;
+  log: (line: string) => Promise<void>;
+}): Promise<void> {
+  if (!isArchiveMirrorEnabled()) return;
+  if (!opts.resolved.unitRelPath) return;
+  try {
+    await deleteUnitArchiveMirror({
+      unitRelPath: opts.resolved.unitRelPath,
+      log: opts.log,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await opts.log(`[grid] archive mirror delete FAILED: ${msg}`);
+    throw err;
+  }
 }
 
 async function failDeployment(
@@ -385,6 +467,22 @@ export async function runLifecycle(
 
     deployment.status = 'success';
     await log('[grid] plan succeeded');
+    try {
+      await mirrorArchiveAfterPlanOrApply({
+        resolved,
+        log,
+        reason: 'uploading generated Terraform after successful plan',
+      });
+    } catch (err) {
+      await failDeployment(
+        deployment,
+        infra,
+        `[grid] archive mirror failed after plan: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return;
+    }
     await saveDeployment(deployment);
     await saveInfrastructure(infra);
     return;
@@ -413,6 +511,18 @@ export async function runLifecycle(
       deployment.status = 'success';
       infra.status = 'destroyed';
       await log('[grid] destroy succeeded');
+      try {
+        await removeArchiveMirrorAfterDestroy({ resolved, log });
+      } catch (err) {
+        await failDeployment(
+          deployment,
+          infra,
+          `[grid] archive mirror delete failed after destroy: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
       await saveDeployment(deployment);
       await saveInfrastructure(infra);
 
@@ -486,6 +596,31 @@ export async function runLifecycle(
     const { markApplied } = await import('./driftService');
     await markApplied(infra);
     await log('[grid] apply succeeded');
+
+    // Upload archive only when the apply actually changed infrastructure.
+    const changed = await tfplanHasInfrastructureChanges(generatedDir, trackKey);
+    if (changed) {
+      try {
+        await mirrorArchiveAfterPlanOrApply({
+          resolved,
+          log,
+          reason: 'uploading generated Terraform after apply (infrastructure changed)',
+        });
+      } catch (err) {
+        await failDeployment(
+          deployment,
+          infra,
+          `[grid] archive mirror failed after apply: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
+    } else {
+      await log(
+        '[grid] archive mirror: skipped after apply (no infrastructure changes)'
+      );
+    }
   } else {
     deployment.status = 'failed';
     infra.status = 'error';

@@ -1,31 +1,38 @@
 import type { CloudProviderType } from '../types/api';
 
-const PROVIDER_LABELS: Record<string, CloudProviderType> = {
-  aws: 'AWS',
-  amazon: 'AWS',
-  gcp: 'GCP',
-  google: 'GCP',
-  gcloud: 'GCP',
-  azure: 'Azure',
-  microsoft: 'Azure',
-  'on-prem': 'On-Prem',
-  onprem: 'On-Prem',
-  'on-premises': 'On-Prem',
-  oracle: 'Oracle',
-  oci: 'Oracle',
-  alibaba: 'Alibaba',
-  aliyun: 'Alibaba',
-  ibm: 'IBM',
-  tencent: 'Tencent',
-  huawei: 'Huawei',
-  yotta: 'Yotta',
-  digitalocean: 'DigitalOcean',
-  linode: 'Linode',
-  hetzner: 'Hetzner',
-  openshift: 'OpenShift',
-  kubernetes: 'Kubernetes',
-  k8s: 'Kubernetes',
-};
+/** Display labels grouped so hyphenated folder names sit with their aliases. */
+const PROVIDER_LABEL_GROUPS: ReadonlyArray<{
+  label: CloudProviderType;
+  aliases: readonly string[];
+}> = [
+  { label: 'AWS', aliases: ['aws', 'amazon'] },
+  { label: 'GCP', aliases: ['gcp', 'google', 'gcloud'] },
+  { label: 'Azure', aliases: ['azure', 'microsoft'] },
+  { label: 'On-Prem', aliases: ['on-prem', 'onprem', 'on-premises'] },
+  { label: 'Oracle', aliases: ['oracle', 'oci'] },
+  { label: 'Alibaba', aliases: ['alibaba', 'aliyun'] },
+  { label: 'IBM', aliases: ['ibm'] },
+  { label: 'Tencent', aliases: ['tencent'] },
+  { label: 'Huawei', aliases: ['huawei'] },
+  { label: 'OVH', aliases: ['ovh'] },
+  { label: 'Deutsche Telekom', aliases: ['deutsche-telekom', 'dt', 'otc'] },
+  { label: 'CtrlS', aliases: ['ctrls'] },
+  { label: 'Yotta', aliases: ['yotta'] },
+  { label: 'DigitalOcean', aliases: ['digitalocean'] },
+  { label: 'Linode', aliases: ['linode'] },
+  { label: 'Hetzner', aliases: ['hetzner'] },
+  { label: 'OpenShift', aliases: ['openshift'] },
+  { label: 'Rancher', aliases: ['rancher'] },
+  { label: 'Confluent Cloud', aliases: ['confluent-cloud'] },
+  { label: 'Redis Enterprise', aliases: ['redis-enterprise'] },
+  { label: 'Kubernetes', aliases: ['kubernetes', 'k8s'] },
+];
+
+const PROVIDER_LABELS: Readonly<Record<string, CloudProviderType>> = Object.fromEntries(
+  PROVIDER_LABEL_GROUPS.flatMap(({ label, aliases }) =>
+    aliases.map((alias) => [alias, label] as const)
+  )
+);
 
 /** Map grid.json `provider` (or folder name) to a stable display label. */
 export function providerFromConfig(cfg: Record<string, unknown>): CloudProviderType {

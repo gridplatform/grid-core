@@ -1,12 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import {
+  archiveMirrorHasS3Endpoint,
+  resolveTfBackendMode as resolveMode,
+  type TfBackendMode,
+} from './lib/tfBackend';
 
 /**
  * Production boot gate (`npm run prod` / `npm start`).
  * Hard requirements — no escape flags. Use `npm run dev` for local work.
  */
 
-export type TfBackendMode = 'local' | 's3' | 'gcs' | 'azurerm';
+export type { TfBackendMode };
 
 type Finding = {
   key: string;
@@ -25,11 +30,8 @@ function display(value: string | undefined, empty = '(not set)'): string {
 }
 
 export function resolveTfBackendMode(): TfBackendMode {
-  const raw = (process.env.GRID_TF_BACKEND || 'local').trim().toLowerCase();
-  if (raw === 's3' || raw === 'gcs' || raw === 'azurerm') return raw;
-  return 'local';
+  return resolveMode();
 }
-
 export function isGitRemoteBank(value: string | undefined): boolean {
   if (!value) return false;
   const v = value.trim();
@@ -61,7 +63,7 @@ function collectTfFindings(): Finding[] {
     out.push({
       key: 'GRID_TF_BACKEND',
       found: foundBackend,
-      expect: 's3 | gcs | azurerm',
+      expect: 's3 | gcs | azurerm | oci | oss | cos | s3compat',
       fix: 'GRID_TF_BACKEND=s3',
     });
     return out;
@@ -72,7 +74,7 @@ function collectTfFindings(): Finding[] {
       out.push({
         key: 'GRID_TF_STATE_BUCKET',
         found: '(not set)',
-        expect: 'S3 bucket name for Terraform state',
+        expect: 'S3 bucket name for Terraform state + archive/',
         fix: 'GRID_TF_STATE_BUCKET=mycompany-grid-tfstate',
       });
     }
@@ -84,12 +86,30 @@ function collectTfFindings(): Finding[] {
         fix: 'GRID_TF_LOCK_TABLE=mycompany-grid-tflock',
       });
     }
+  } else if (mode === 's3compat') {
+    if (!process.env.GRID_TF_STATE_BUCKET?.trim()) {
+      out.push({
+        key: 'GRID_TF_STATE_BUCKET',
+        found: '(not set)',
+        expect: 'Bucket name on the S3-compatible store (OBS / MinIO / …)',
+        fix: 'GRID_TF_STATE_BUCKET=mycompany-grid-tfstate',
+      });
+    }
+    if (!archiveMirrorHasS3Endpoint({ mode: 's3compat' })) {
+      out.push({
+        key: 'GRID_TF_S3_ENDPOINT',
+        found: '(not set)',
+        expect:
+          'S3-compatible API endpoint (required for ibm/ctrls/yotta/minio; huawei/ovh/otc can derive from GRID_TF_STATE_REGION)',
+        fix: 'GRID_TF_S3_ENDPOINT=https://obs.cn-north-1.myhuaweicloud.com',
+      });
+    }
   } else if (mode === 'gcs') {
     if (!process.env.GRID_TF_STATE_BUCKET?.trim()) {
       out.push({
         key: 'GRID_TF_STATE_BUCKET',
         found: '(not set)',
-        expect: 'GCS bucket name for Terraform state',
+        expect: 'GCS bucket name for Terraform state + archive/',
         fix: 'GRID_TF_STATE_BUCKET=mycompany-grid-tfstate',
       });
     }
@@ -115,6 +135,68 @@ function collectTfFindings(): Finding[] {
         expect: 'Blob container name (e.g. grid-tfstate)',
       });
     }
+  } else if (mode === 'oci') {
+    if (!process.env.GRID_TF_STATE_BUCKET?.trim()) {
+      out.push({
+        key: 'GRID_TF_STATE_BUCKET',
+        found: '(not set)',
+        expect: 'OCI Object Storage bucket for state + archive/',
+        fix: 'GRID_TF_STATE_BUCKET=mycompany-grid-tfstate',
+      });
+    }
+    if (!process.env.GRID_TF_OCI_NAMESPACE?.trim()) {
+      out.push({
+        key: 'GRID_TF_OCI_NAMESPACE',
+        found: '(not set)',
+        expect: 'OCI tenancy Object Storage namespace',
+        fix: 'GRID_TF_OCI_NAMESPACE=<tenancy-namespace>',
+      });
+    }
+    if (!archiveMirrorHasS3Endpoint({ mode: 'oci' })) {
+      out.push({
+        key: 'GRID_TF_S3_ENDPOINT',
+        found: '(not set / cannot derive)',
+        expect:
+          'OCI S3-compatible endpoint for archive mirror (or set GRID_TF_OCI_NAMESPACE + GRID_TF_STATE_REGION to derive)',
+        fix: 'GRID_TF_S3_ENDPOINT=https://<namespace>.compat.objectstorage.<region>.oraclecloud.com',
+      });
+    }
+  } else if (mode === 'oss') {
+    if (!process.env.GRID_TF_STATE_BUCKET?.trim()) {
+      out.push({
+        key: 'GRID_TF_STATE_BUCKET',
+        found: '(not set)',
+        expect: 'Alibaba OSS bucket for state + archive/',
+        fix: 'GRID_TF_STATE_BUCKET=mycompany-grid-tfstate',
+      });
+    }
+    if (!archiveMirrorHasS3Endpoint({ mode: 'oss' })) {
+      out.push({
+        key: 'GRID_TF_S3_ENDPOINT',
+        found: '(not set / cannot derive)',
+        expect:
+          'OSS S3-compatible endpoint for archive mirror (or set GRID_TF_STATE_REGION to derive)',
+        fix: 'GRID_TF_S3_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com',
+      });
+    }
+  } else if (mode === 'cos') {
+    if (!process.env.GRID_TF_STATE_BUCKET?.trim()) {
+      out.push({
+        key: 'GRID_TF_STATE_BUCKET',
+        found: '(not set)',
+        expect: 'Tencent COS bucket for state + archive/',
+        fix: 'GRID_TF_STATE_BUCKET=mycompany-grid-tfstate-<appid>',
+      });
+    }
+    if (!process.env.GRID_TF_STATE_REGION?.trim()) {
+      out.push({
+        key: 'GRID_TF_STATE_REGION',
+        found: '(not set)',
+        expect: 'COS region (e.g. ap-guangzhou)',
+        fix: 'GRID_TF_STATE_REGION=ap-guangzhou',
+      });
+    }
+    // Archive mirror uses S3-compatible COS API; default derived if unset.
   }
 
   return out;
