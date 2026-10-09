@@ -15,6 +15,7 @@ import {
   getDeployment,
   getInfrastructure,
   saveDeployment,
+  saveInfrastructure,
 } from '../store/memoryStore';
 import {
   abortDeploymentProcesses,
@@ -180,9 +181,19 @@ async function executeRelease(releaseId: string): Promise<void> {
       await finishRelease(release, false, 'Infrastructure not found');
       return;
     }
-    if (infra.status === 'destroyed') {
-      await finishRelease(release, false, 'Infrastructure was destroyed');
+    if (infra.status === 'destroyed' && !infra.gitPath) {
+      await finishRelease(release, false, 'Infrastructure was destroyed and has no config path');
       return;
+    }
+    if (infra.status === 'destroyed' && infra.gitPath) {
+      infra.status = 'pending';
+      infra.lastAppliedHash = undefined;
+      infra.updatedAt = new Date().toISOString();
+      await saveInfrastructure(infra);
+      await appendReleaseLog(
+        release.id,
+        '[grid] legacy destroyed status → pending (config-backed unit)'
+      );
     }
 
     if (release.mode !== 'plan' && release.mode !== 'apply' && release.mode !== 'destroy') {
@@ -266,7 +277,9 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
   if (input.infrastructureId) {
     const infra = await getInfrastructure(input.infrastructureId);
     if (!infra) throw new Error('Infrastructure not found');
-    if (infra.status === 'destroyed') throw new Error('Infrastructure was destroyed');
+    if (infra.status === 'destroyed' && !infra.gitPath) {
+      throw new Error('Infrastructure was destroyed and has no config path');
+    }
     infrastructureName = infra.name;
     projectSlug = infra.project;
   }

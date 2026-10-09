@@ -177,16 +177,22 @@ async function runConfigRootSync(): Promise<SyncStats> {
             gitContentHash: contentHash,
             project,
           });
-        } else if (existing.gitContentHash === contentHash && existing.status !== 'stale') {
-          // Unchanged — skip write.
+        } else if (
+          existing.gitContentHash === contentHash &&
+          existing.status !== 'stale' &&
+          existing.status !== 'destroyed'
+        ) {
+          // Unchanged and active — skip write.
         } else {
+          // Intent still present: revive stale/destroyed → pending/running.
+          // Destroy never removes config-backed units; sync brings them back to pending.
           const restoredStatus: ResourceStatus =
-            existing.status === 'stale'
-              ? existing.lastAppliedHash
-                ? 'running'
-                : 'pending'
-              : existing.status === 'destroyed'
-                ? 'pending'
+            existing.status === 'destroyed'
+              ? 'pending'
+              : existing.status === 'stale'
+                ? existing.lastAppliedHash
+                  ? 'running'
+                  : 'pending'
                 : existing.status;
 
           await saveInfrastructure({
@@ -199,6 +205,8 @@ async function runConfigRootSync(): Promise<SyncStats> {
             gitContentHash: contentHash,
             project,
             status: restoredStatus,
+            lastAppliedHash:
+              existing.status === 'destroyed' ? undefined : existing.lastAppliedHash,
             updatedAt: new Date().toISOString(),
           });
         }

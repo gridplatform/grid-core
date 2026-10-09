@@ -166,11 +166,12 @@ router.get('/infrastructures', async (req, res) => {
 
   const access = await accessForRequest(req);
   const items = await listInfrastructures();
-  // Config-backed units + stale (removed from config, still in state). Never list destroyed orphans.
+  // Config-driven catalog: list every accessible unit (including pending after destroy).
+  // Legacy `destroyed` rows with no gitPath are orphans — omit those only.
   const scoped = access ? filterInfrastructuresByAccess(access, items) : items;
   res.json(
     scoped
-      .filter((i) => i.status !== 'destroyed')
+      .filter((i) => !(i.status === 'destroyed' && !i.gitPath))
       .filter((i) => {
         if (project && (i.project || '').toLowerCase() !== project.toLowerCase()) return false;
         if (environment && i.environment.toLowerCase() !== environment.toLowerCase()) {
@@ -249,9 +250,16 @@ router.patch('/infrastructures/:id', async (req, res) => {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  if (infra.status === 'destroyed') {
-    res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed; create a new one' });
+  if (infra.status === 'destroyed' && !infra.gitPath) {
+    res.status(409).json({
+      code: 'destroyed',
+      message: 'Infrastructure was destroyed and has no config path',
+    });
     return;
+  }
+  if (infra.status === 'destroyed' && infra.gitPath) {
+    infra.status = 'pending';
+    infra.lastAppliedHash = undefined;
   }
 
   const parsed = PatchInfraSchema.safeParse(req.body);
@@ -302,10 +310,11 @@ async function enqueueInfrastructureRelease(
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
   }
-  if (infra.status === 'destroyed') {
+  // Destroyed is legacy; config-backed units are pending after destroy and operable.
+  if (infra.status === 'destroyed' && !infra.gitPath) {
     res.status(409).json({
       code: 'destroyed',
-      message: mode === 'destroy' ? 'Already destroyed' : 'Infrastructure was destroyed',
+      message: 'Infrastructure was destroyed and has no config path',
     });
     return;
   }
@@ -472,7 +481,7 @@ router.post('/deployments', async (req, res) => {
       res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
       return;
     }
-    if (existing.status === 'destroyed') {
+    if (existing.status === 'destroyed' && !existing.gitPath) {
       res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
       return;
     }
@@ -480,6 +489,10 @@ router.post('/deployments', async (req, res) => {
     existing.environment = body.environment;
     existing.configJson = mapped.gridConfig;
     existing.provider = mapped.displayProvider;
+    if (existing.status === 'destroyed') {
+      existing.status = 'pending';
+      existing.lastAppliedHash = undefined;
+    }
     existing.updatedAt = new Date().toISOString();
     infra = await saveInfrastructure(existing);
   } else {

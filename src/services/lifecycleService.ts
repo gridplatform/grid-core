@@ -509,7 +509,6 @@ export async function runLifecycle(
 
     if (destroyCode === 0) {
       deployment.status = 'success';
-      infra.status = 'destroyed';
       await log('[grid] destroy succeeded');
       try {
         await removeArchiveMirrorAfterDestroy({ resolved, log });
@@ -523,22 +522,19 @@ export async function runLifecycle(
         );
         return;
       }
+
+      // Grid is config-driven: destroy clears cloud (+ archive mirror), it does NOT
+      // remove the catalog row. Intent JSON decides membership via sync.
+      // After destroy → pending so the unit stays visible for plan/apply recreate.
+      infra.status = 'pending';
+      infra.lastAppliedHash = undefined;
+      infra.updatedAt = new Date().toISOString();
+      await log(
+        '[grid] unit kept in catalog — status → pending (destroy does not remove config-backed units)'
+      );
+
       await saveDeployment(deployment);
       await saveInfrastructure(infra);
-
-      // If desired-state JSON is gone, drop the store row so it does not linger as a ghost.
-      if (infra.gitPath) {
-        const abs = path.join(config.configRoot, infra.gitPath);
-        if (!(await fs.pathExists(abs))) {
-          const { deleteInfrastructure } = await import('../store/memoryStore');
-          await deleteInfrastructure(infra.id);
-          await log('[grid] removed store entry (no longer in config)');
-        }
-      } else {
-        const { deleteInfrastructure } = await import('../store/memoryStore');
-        await deleteInfrastructure(infra.id);
-        await log('[grid] removed orphan store entry');
-      }
       return;
     }
 
