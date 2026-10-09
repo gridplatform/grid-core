@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { v4 as uuid } from 'uuid';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 import type { SessionRecord, StoredUser, UserStoreShape } from '../auth/types';
 
 const USERS_FILE = () => path.join(config.dataDir, 'users.json');
@@ -24,35 +25,24 @@ function emptyStore(): UserStoreShape {
 async function readUnlocked(): Promise<UserStoreShape> {
   await fs.ensureDir(config.dataDir);
   const file = USERS_FILE();
-  if (!(await fs.pathExists(file))) {
-    await fs.writeJSON(file, emptyStore(), { spaces: 2 });
-    return emptyStore();
+  const parsed = await readJsonSafe<Partial<UserStoreShape>>(file, {
+    label: 'users.json',
+  });
+  if (!parsed) {
+    const empty = emptyStore();
+    await writeJsonAtomic(file, empty);
+    return empty;
   }
-  try {
-    const parsed = (await fs.readJSON(file)) as Partial<UserStoreShape>;
-    return {
-      version: 1,
-      users: Array.isArray(parsed.users) ? parsed.users : [],
-      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-    };
-  } catch {
-    const bak = `${file}.corrupt.${Date.now()}`;
-    try {
-      await fs.move(file, bak, { overwrite: true });
-    } catch {
-      await fs.remove(file).catch(() => undefined);
-    }
-    await fs.writeJSON(file, emptyStore(), { spaces: 2 });
-    return emptyStore();
-  }
+  return {
+    version: 1,
+    users: Array.isArray(parsed.users) ? parsed.users : [],
+    sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+  };
 }
 
 async function writeUnlocked(store: UserStoreShape): Promise<void> {
   await fs.ensureDir(config.dataDir);
-  const file = USERS_FILE();
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
-  await fs.writeJSON(tmp, store, { spaces: 2 });
-  await fs.move(tmp, file, { overwrite: true });
+  await writeJsonAtomic(USERS_FILE(), store);
 }
 
 export async function readUserStore(): Promise<UserStoreShape> {

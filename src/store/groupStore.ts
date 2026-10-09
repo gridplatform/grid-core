@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { v4 as uuid } from 'uuid';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 import {
   DEFAULT_GROUPS,
   defaultCustomGroupPermissions,
@@ -53,26 +54,22 @@ function empty(): GroupStoreShape {
 async function readUnlocked(): Promise<GroupStoreShape> {
   await fs.ensureDir(config.dataDir);
   const file = GROUPS_FILE();
-  if (!(await fs.pathExists(file))) {
-    await fs.writeJSON(file, empty(), { spaces: 2 });
-    return empty();
+  const parsed = await readJsonSafe<Partial<GroupStoreShape>>(file, {
+    label: 'groups.json',
+  });
+  if (!parsed) {
+    const seed = empty();
+    await writeJsonAtomic(file, seed);
+    return seed;
   }
-  try {
-    const parsed = (await fs.readJSON(file)) as Partial<GroupStoreShape>;
-    return {
-      version: 1,
-      groups: Array.isArray(parsed.groups) ? parsed.groups : [],
-    };
-  } catch {
-    return empty();
-  }
+  return {
+    version: 1,
+    groups: Array.isArray(parsed.groups) ? parsed.groups : [],
+  };
 }
 
 async function writeUnlocked(store: GroupStoreShape): Promise<void> {
-  const file = GROUPS_FILE();
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
-  await fs.writeJSON(tmp, store, { spaces: 2 });
-  await fs.move(tmp, file, { overwrite: true });
+  await writeJsonAtomic(GROUPS_FILE(), store);
 }
 
 function normalizeSlug(slug: string): string {

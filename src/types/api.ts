@@ -179,6 +179,8 @@ export interface User {
    */
   role: 'developer' | 'maintainer' | 'admin' | 'superadmin' | 'member';
   avatarUrl?: string;
+  /** When true, login is rejected. Omitted/false = active. */
+  disabled?: boolean;
   createdAt: string;
 }
 

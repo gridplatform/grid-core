@@ -2,6 +2,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 
 /**
  * Module bank (grid-terraform) checkout — same idea as desired-state GitOps:
@@ -124,14 +125,10 @@ export function isModuleBankSyncRunning(): boolean {
 }
 
 async function readSettingsFile(): Promise<Partial<ModuleBankSettings>> {
-  try {
-    if (await fs.pathExists(SETTINGS_FILE())) {
-      return (await fs.readJSON(SETTINGS_FILE())) as Partial<ModuleBankSettings>;
-    }
-  } catch {
-    /* ignore */
-  }
-  return {};
+  const parsed = await readJsonSafe<Partial<ModuleBankSettings>>(SETTINGS_FILE(), {
+    label: 'module-bank-settings.json',
+  });
+  return parsed || {};
 }
 
 /** Load settings (cached). Call on boot and after updates. */
@@ -184,28 +181,24 @@ export async function saveModuleBankSettings(
     updatedAt: new Date().toISOString(),
   };
   await fs.ensureDir(config.dataDir);
-  await fs.writeJSON(SETTINGS_FILE(), next, { spaces: 2 });
+  await writeJsonAtomic(SETTINGS_FILE(), next);
   settingsCache = next;
   restartModuleBankAutoSync();
   return next;
 }
 
 async function readStatusFile(): Promise<Partial<ModuleBankStatus>> {
-  try {
-    if (await fs.pathExists(STATUS_FILE())) {
-      return (await fs.readJSON(STATUS_FILE())) as Partial<ModuleBankStatus>;
-    }
-  } catch {
-    /* ignore */
-  }
-  return {};
+  const parsed = await readJsonSafe<Partial<ModuleBankStatus>>(STATUS_FILE(), {
+    label: 'module-bank-status.json',
+  });
+  return parsed || {};
 }
 
 async function writeStatus(patch: Partial<ModuleBankStatus>): Promise<ModuleBankStatus> {
   const current = await getModuleBankStatus({ includeVersions: false });
   const next: ModuleBankStatus = { ...current, ...patch };
   await fs.ensureDir(config.dataDir);
-  await fs.writeJSON(STATUS_FILE(), next, { spaces: 2 });
+  await writeJsonAtomic(STATUS_FILE(), next);
   return next;
 }
 

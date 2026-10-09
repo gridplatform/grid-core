@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { v4 as uuid } from 'uuid';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 import type { Deployment, Infrastructure } from '../types/api';
 
 interface StoreShape {
@@ -33,49 +34,26 @@ async function readStoreUnlocked(): Promise<StoreShape> {
   const file = STORE_FILE();
   const empty: StoreShape = { infrastructures: [], deployments: [] };
 
-  if (!(await fs.pathExists(file))) {
-    await fs.writeJSON(file, empty);
+  const parsed = await readJsonSafe<Partial<StoreShape>>(file, {
+    label: 'store.json',
+  });
+  if (!parsed) {
+    await writeJsonAtomic(file, empty, { spaces: false });
     memoryStore = empty;
     return memoryStore;
   }
 
-  try {
-    const raw = await fs.readFile(file, 'utf8');
-    if (!raw.trim()) {
-      await fs.writeJSON(file, empty);
-      memoryStore = empty;
-      return memoryStore;
-    }
-    const parsed = JSON.parse(raw) as Partial<StoreShape>;
-    memoryStore = {
-      infrastructures: Array.isArray(parsed.infrastructures) ? parsed.infrastructures : [],
-      deployments: Array.isArray(parsed.deployments) ? parsed.deployments : [],
-    };
-    return memoryStore;
-  } catch {
-    const bak = `${file}.corrupt.${Date.now()}`;
-    try {
-      await fs.move(file, bak, { overwrite: true });
-    } catch {
-      try {
-        await fs.remove(file);
-      } catch {
-        /* ignore */
-      }
-    }
-    await fs.writeJSON(file, empty);
-    memoryStore = empty;
-    return memoryStore;
-  }
+  memoryStore = {
+    infrastructures: Array.isArray(parsed.infrastructures) ? parsed.infrastructures : [],
+    deployments: Array.isArray(parsed.deployments) ? parsed.deployments : [],
+  };
+  return memoryStore;
 }
 
 async function writeStoreUnlocked(store: StoreShape): Promise<void> {
   await fs.ensureDir(config.dataDir);
-  const file = STORE_FILE();
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   // Compact JSON keeps large catalogs smaller on disk and faster to rewrite.
-  await fs.writeJSON(tmp, store);
-  await fs.move(tmp, file, { overwrite: true });
+  await writeJsonAtomic(STORE_FILE(), store, { spaces: false });
   memoryStore = store;
 }
 

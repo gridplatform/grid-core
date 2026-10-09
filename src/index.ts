@@ -119,6 +119,10 @@ async function main() {
     );
 }
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+
 main().catch((err) => {
   console.error(err);
   process.exit(1);

@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { v4 as uuid } from 'uuid';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 
 export type AuditAction =
   | 'auth.login'
@@ -52,43 +53,19 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function atomicWriteJson(file: string, data: unknown): Promise<void> {
-  await fs.ensureDir(path.dirname(file));
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-  await fs.writeJSON(tmp, data, { spaces: 2 });
-  await fs.move(tmp, file, { overwrite: true });
-}
-
 async function readUnlocked(): Promise<AuditEvent[]> {
   await fs.ensureDir(config.dataDir);
   const file = AUDIT_FILE();
-  if (!(await fs.pathExists(file))) {
-    await atomicWriteJson(file, []);
+  const data = await readJsonSafe<unknown>(file, { label: 'audit-log.json' });
+  if (data === null) {
+    await writeJsonAtomic(file, []);
     return [];
   }
-  try {
-    const raw = await fs.readFile(file, 'utf8');
-    if (!raw.trim()) {
-      await atomicWriteJson(file, []);
-      return [];
-    }
-    const data = JSON.parse(raw) as unknown;
-    return Array.isArray(data) ? (data as AuditEvent[]) : [];
-  } catch {
-    const bak = `${file}.corrupt.${Date.now()}`;
-    try {
-      await fs.move(file, bak, { overwrite: true });
-      console.warn(`[audit] corrupt audit-log.json moved to ${bak}; starting empty`);
-    } catch {
-      await fs.remove(file).catch(() => undefined);
-    }
-    await atomicWriteJson(file, []);
-    return [];
-  }
+  return Array.isArray(data) ? (data as AuditEvent[]) : [];
 }
 
 async function writeUnlocked(events: AuditEvent[]): Promise<void> {
-  await atomicWriteJson(AUDIT_FILE(), events.slice(0, MAX_EVENTS));
+  await writeJsonAtomic(AUDIT_FILE(), events.slice(0, MAX_EVENTS));
 }
 
 export async function listAuditEvents(limit = 200): Promise<AuditEvent[]> {

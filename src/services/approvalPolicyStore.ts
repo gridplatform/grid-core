@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs-extra';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 
 export interface EnvApprovalPolicy {
   /** Environment folder slug as discovered under projects/<app>/<cloud>/<env>/ */
@@ -32,28 +33,20 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 async function readFile(): Promise<PolicyFile> {
   await fs.ensureDir(config.dataDir);
   const file = POLICY_FILE();
-  if (!(await fs.pathExists(file))) {
-    const empty: PolicyFile = { version: 1, policies: [] };
-    await fs.writeJSON(file, empty, { spaces: 2 });
+  const empty: PolicyFile = { version: 1, policies: [] };
+  const data = await readJsonSafe<PolicyFile>(file, {
+    label: 'approval-policies.json',
+  });
+  if (!data || !Array.isArray(data.policies)) {
+    await writeJsonAtomic(file, empty);
     return empty;
   }
-  try {
-    const data = (await fs.readJSON(file)) as PolicyFile;
-    if (!data || !Array.isArray(data.policies)) {
-      return { version: 1, policies: [] };
-    }
-    return { version: 1, policies: data.policies };
-  } catch {
-    return { version: 1, policies: [] };
-  }
+  return { version: 1, policies: data.policies };
 }
 
 async function writeFile(data: PolicyFile): Promise<void> {
   await fs.ensureDir(config.dataDir);
-  const file = POLICY_FILE();
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
-  await fs.writeJSON(tmp, data, { spaces: 2 });
-  await fs.move(tmp, file, { overwrite: true });
+  await writeJsonAtomic(POLICY_FILE(), data);
 }
 
 /**

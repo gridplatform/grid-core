@@ -2,6 +2,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
 import { cliChildEnv, config } from '../config';
+import { writeJsonAtomic } from '../lib/jsonFile';
 import type { Infrastructure } from '../types/api';
 import type { DriftReport } from '../types/gitops';
 import { hashContent } from './gitopsHash';
@@ -57,7 +58,7 @@ async function ensureGenerated(infra: Infrastructure, generatedDir: string): Pro
   }
 
   await fs.ensureDir(path.dirname(configPath));
-  await fs.writeJSON(configPath, infra.configJson, { spaces: 2 });
+  await writeJsonAtomic(configPath, infra.configJson);
   await fs.ensureDir(terraformDir);
 
   const cliEntryJs = path.join(config.cliRoot, 'dist', 'index.js');

@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { v5 as uuidv5 } from 'uuid';
 import { config } from '../config';
+import { writeJsonAtomic } from '../lib/jsonFile';
 import type { Infrastructure, ResourceStatus } from '../types/api';
 import {
   createInfrastructure,
@@ -245,7 +246,7 @@ export async function restoreInfrastructureToConfig(
   }
   const abs = path.join(config.configRoot, infra.gitPath);
   await fs.ensureDir(path.dirname(abs));
-  await fs.writeJSON(abs, infra.configJson, { spaces: 2 });
+  await writeJsonAtomic(abs, infra.configJson);
 
   const next: Infrastructure = {
     ...infra,

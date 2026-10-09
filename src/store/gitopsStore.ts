@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs-extra';
 import { config } from '../config';
+import { readJsonSafe, writeJsonAtomic } from '../lib/jsonFile';
 import type { GitOpsRuntimeStatus, GitOpsSettings } from '../types/gitops';
 
 const SETTINGS_FILE = () => path.join(config.dataDir, 'gitops-settings.json');
@@ -14,21 +15,26 @@ export function gitopsCloneDir(): string {
   return config.configRoot;
 }
 
+function settingsFromEnv(): GitOpsSettings | null {
+  if (!config.gitops.repoUrl) return null;
+  return {
+    repoUrl: config.gitops.repoUrl,
+    branch: config.gitops.branch,
+    pathPrefix: config.gitops.pathPrefix,
+    syncIntervalSec: config.gitops.syncIntervalSec,
+    enabled: true,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export async function loadGitOpsSettings(): Promise<GitOpsSettings | null> {
   await fs.ensureDir(config.dataDir);
+  const fromEnv = settingsFromEnv();
+  const existing = await readJsonSafe<GitOpsSettings>(SETTINGS_FILE(), {
+    label: 'gitops-settings.json',
+  });
 
-  const fromEnv: GitOpsSettings | null = config.gitops.repoUrl
-    ? {
-        repoUrl: config.gitops.repoUrl,
-        branch: config.gitops.branch,
-        pathPrefix: config.gitops.pathPrefix,
-        syncIntervalSec: config.gitops.syncIntervalSec,
-        enabled: true,
-        updatedAt: new Date().toISOString(),
-      }
-    : null;
-
-  if (!(await fs.pathExists(SETTINGS_FILE()))) {
+  if (!existing) {
     if (fromEnv) {
       await saveGitOpsSettings(fromEnv);
       return fromEnv;
@@ -36,7 +42,6 @@ export async function loadGitOpsSettings(): Promise<GitOpsSettings | null> {
     return null;
   }
 
-  const existing = (await fs.readJSON(SETTINGS_FILE())) as GitOpsSettings;
   // Env wins when set (remote public repos / CI) — keep file fields otherwise.
   if (fromEnv) {
     const merged: GitOpsSettings = {
@@ -60,14 +65,17 @@ export async function loadGitOpsSettings(): Promise<GitOpsSettings | null> {
 export async function saveGitOpsSettings(settings: GitOpsSettings): Promise<GitOpsSettings> {
   await fs.ensureDir(config.dataDir);
   settings.updatedAt = new Date().toISOString();
-  await fs.writeJSON(SETTINGS_FILE(), settings, { spaces: 2 });
+  await writeJsonAtomic(SETTINGS_FILE(), settings);
   return settings;
 }
 
 export async function loadGitOpsRuntime(): Promise<GitOpsRuntimeStatus> {
   await fs.ensureDir(config.dataDir);
   const settings = await loadGitOpsSettings();
-  if (!(await fs.pathExists(STATUS_FILE()))) {
+  const status = await readJsonSafe<GitOpsRuntimeStatus>(STATUS_FILE(), {
+    label: 'gitops-status.json',
+  });
+  if (!status) {
     return {
       settings,
       syncStatus: 'idle',
@@ -75,7 +83,6 @@ export async function loadGitOpsRuntime(): Promise<GitOpsRuntimeStatus> {
       clonePath: gitopsCloneDir(),
     };
   }
-  const status = (await fs.readJSON(STATUS_FILE())) as GitOpsRuntimeStatus;
   status.settings = settings;
   status.clonePath = gitopsCloneDir();
   return status;
@@ -90,6 +97,6 @@ export async function saveGitOpsRuntime(
     ...patch,
     settings: patch.settings !== undefined ? patch.settings : current.settings,
   };
-  await fs.writeJSON(STATUS_FILE(), next, { spaces: 2 });
+  await writeJsonAtomic(STATUS_FILE(), next);
   return next;
 }

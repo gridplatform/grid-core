@@ -2,6 +2,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
 import { cliChildEnv, config } from '../config';
+import { writeJsonAtomic } from '../lib/jsonFile';
 import type { Deployment, Infrastructure, LifecycleMode } from '../types/api';
 import {
   appendDeploymentLog,
@@ -238,7 +239,7 @@ export async function runLifecycle(
 ): Promise<void> {
   const resolved = resolveTerraformDirs(infra);
   await fs.ensureDir(path.dirname(resolved.configPath));
-  await fs.writeJSON(resolved.configPath, infra.configJson, { spaces: 2 });
+  await writeJsonAtomic(resolved.configPath, infra.configJson);
   await fs.ensureDir(resolved.terraformDir);
 
   if (resolved.derivedGitPath && !infra.gitPath) {
