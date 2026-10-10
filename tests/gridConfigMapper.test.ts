@@ -5,7 +5,7 @@ import {
 } from '../src/services/gridConfigMapper';
 
 describe('mapDeployRequestToGridConfig', () => {
-  it('rejects kubernetes engine', () => {
+  it('rejects kubernetes without source', () => {
     expect(() =>
       mapDeployRequestToGridConfig({
         name: 'app',
@@ -15,6 +15,28 @@ describe('mapDeployRequestToGridConfig', () => {
         config: {},
       })
     ).toThrow(DeployMapError);
+  });
+
+  it('maps kubernetes workload intent', () => {
+    const mapped = mapDeployRequestToGridConfig({
+      name: 'demo-api',
+      engine: 'kubernetes',
+      environment: 'development',
+      resourceType: 'helm-release',
+      config: {
+        destination: { namespace: 'demo' },
+        source: {
+          repoURL: 'https://github.com/example/gitops.git',
+          path: 'apps/demo-api',
+        },
+        clusterRef: 'eks-main',
+      },
+    });
+    expect(mapped.gridConfig.engine).toBe('kubernetes');
+    expect(mapped.gridConfig.kind).toBe('helm-release');
+    expect((mapped.gridConfig.destination as { namespace: string }).namespace).toBe('demo');
+    expect((mapped.gridConfig.source as { repoURL: string }).repoURL).toContain('gitops');
+    expect((mapped.gridConfig.metadata as { clusterRef: string }).clusterRef).toBe('eks-main');
   });
 
   it('passes through explicit resources arrays', () => {

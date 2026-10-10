@@ -14,6 +14,10 @@ import {
   saveInfrastructure,
 } from '../store/memoryStore';
 import { runLifecycle } from '../services/lifecycleService';
+import {
+  isKubernetesInfrastructure,
+  runKubernetesLifecycle,
+} from '../services/argo/kubernetesLifecycle';
 import { buildTopologyFromInfrastructures } from '../services/topologyService';
 import { listEnvironmentsFromConfig } from '../services/environmentsService';
 import { listProjectsFromConfig } from '../services/projectsService';
@@ -119,15 +123,21 @@ async function startLifecycle(
   meta?: { name?: string; engine?: string; resourceType?: string; provider?: string; environment?: string }
 ) {
   await cancelActiveDeploymentsForInfrastructure(infra.id);
+  const k8s =
+    meta?.engine === 'kubernetes' || isKubernetesInfrastructure(infra);
   const deployment = await createDeployment(infra.id, triggeredBy, {
     name: meta?.name || infra.name,
-    engine: meta?.engine || 'terraform',
+    engine: k8s ? 'kubernetes' : meta?.engine || 'terraform',
     resourceType: meta?.resourceType,
     provider: meta?.provider || infra.provider,
     environment: meta?.environment || infra.environment,
     mode,
   });
-  void runLifecycle(infra, deployment, mode);
+  if (k8s) {
+    void runKubernetesLifecycle(infra, deployment, mode);
+  } else {
+    void runLifecycle(infra, deployment, mode);
+  }
   return deployment;
 }
 
@@ -455,13 +465,6 @@ router.post('/deployments', async (req, res) => {
   }
 
   const body = parsed.data;
-  if (body.engine === 'kubernetes') {
-    res.status(501).json({
-      code: 'not_implemented',
-      message: 'Kubernetes workloads are not applied yet. Use engine=terraform for infrastructure.',
-    });
-    return;
-  }
 
   let mapped;
   try {

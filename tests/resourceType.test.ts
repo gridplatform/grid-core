@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { resolveResourceType } from '../src/services/resourceType';
+import {
+  pickPrimaryResourceType,
+  resolveResourceType,
+} from '../src/services/resourceType';
+
+describe('pickPrimaryResourceType', () => {
+  it('prefers vm over leading security-group', () => {
+    expect(
+      pickPrimaryResourceType([
+        { type: 'security-group' },
+        { type: 'vm' },
+      ])
+    ).toBe('vm');
+  });
+});
 
 describe('resolveResourceType', () => {
-  it('prefers resources[0].type from config JSON', () => {
+  it('prefers primary resource over resources[0] supporting type', () => {
+    expect(
+      resolveResourceType({
+        configJson: {
+          resources: [{ type: 'security-group' }, { type: 'vm' }],
+        },
+        gitPath: 'projects/demo/aws/dev/ec2/lab.json',
+        name: 'ignored',
+      })
+    ).toBe('ec2');
+  });
+
+  it('uses single resources[0].type when alone', () => {
     expect(
       resolveResourceType({
         configJson: { resources: [{ type: 'EKS' }] },

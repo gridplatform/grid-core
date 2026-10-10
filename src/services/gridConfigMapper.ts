@@ -74,13 +74,92 @@ const TOP_LEVEL_CONFIG_KEYS = new Set([
 ]);
 
 /**
+ * Map a deploy request to a Kubernetes workload intent (Argo Application input).
+ * Cluster / node-pool units stay on the terraform engine path.
+ */
+function mapKubernetesDeployRequest(req: GridDeployRequest): MappedDeploy {
+  const cfg = req.config || {};
+  const metaIn =
+    cfg.metadata && typeof cfg.metadata === 'object'
+      ? (cfg.metadata as Record<string, unknown>)
+      : {};
+  const source = cfg.source;
+  if (!source || typeof source !== 'object') {
+    throw new DeployMapError(
+      'config.source is required for kubernetes workloads (repoURL + path or helm)',
+      422
+    );
+  }
+  const src = source as Record<string, unknown>;
+  if (typeof src.repoURL !== 'string' || !src.repoURL.trim()) {
+    throw new DeployMapError('config.source.repoURL is required', 422);
+  }
+
+  const destIn =
+    cfg.destination && typeof cfg.destination === 'object'
+      ? (cfg.destination as Record<string, unknown>)
+      : {};
+  const namespace = asString(
+    destIn.namespace ?? cfg.namespace,
+    ''
+  );
+  if (!namespace) {
+    throw new DeployMapError('config.destination.namespace is required', 422);
+  }
+
+  const cluster =
+    cfg.cluster && typeof cfg.cluster === 'object'
+      ? (cfg.cluster as Record<string, unknown>)
+      : undefined;
+
+  const gridConfig: Record<string, unknown> = {
+    engine: 'kubernetes',
+    kind: asString(cfg.kind, req.resourceType || 'workload'),
+    metadata: {
+      name: asString(metaIn.name, req.name),
+      environment: toCliEnvironment(
+        asString(metaIn.environment, req.environment)
+      ),
+      project: asString(metaIn.project ?? cfg.project, 'grid'),
+      ...(typeof metaIn.clusterRef === 'string'
+        ? { clusterRef: metaIn.clusterRef }
+        : typeof cfg.clusterRef === 'string'
+          ? { clusterRef: cfg.clusterRef }
+          : {}),
+    },
+    destination: { namespace },
+    source: {
+      repoURL: String(src.repoURL).trim(),
+      ...(typeof src.path === 'string' ? { path: src.path } : {}),
+      ...(typeof src.targetRevision === 'string'
+        ? { targetRevision: src.targetRevision }
+        : {}),
+      ...(src.helm && typeof src.helm === 'object' ? { helm: src.helm } : {}),
+      ...(src.directory && typeof src.directory === 'object'
+        ? { directory: src.directory }
+        : {}),
+    },
+    autoSync: Boolean(cfg.autoSync),
+    project: asString(cfg.argoProject ?? cfg.project, 'default'),
+  };
+  if (cluster) gridConfig.cluster = cluster;
+
+  return {
+    displayProvider: toDisplayProvider(
+      normalizeProviderId(req.provider || asString(cfg.provider, 'kubernetes'))
+    ),
+    gridConfig,
+  };
+}
+
+/**
  * Map a deploy request to grid.json.
  * Composer types expand to network/compute recipes; others pass through as module vars.
  * Deploy gating is UI-only (feature flags), not enforced here.
  */
 export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDeploy {
   if (req.engine === 'kubernetes') {
-    throw new DeployMapError('Workloads engine is not connected to apply yet', 501);
+    return mapKubernetesDeployRequest(req);
   }
 
   if (req.engine !== 'terraform') {

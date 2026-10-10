@@ -82,6 +82,24 @@ export const config = {
       : 20
   ),
   terraformBin: process.env.GRID_TERRAFORM_BIN || 'terraform',
+  /**
+   * Argo CD / OpenShift GitOps — Kubernetes workload reconciler.
+   * Same Application CRD for upstream Argo and OpenShift GitOps operator.
+   */
+  argo: {
+    enabled:
+      process.env.GRID_ARGO_ENABLED === '1' ||
+      process.env.GRID_ARGO_ENABLED === 'true',
+    /** kubeconfig for the cluster where Argo / OpenShift GitOps runs */
+    kubeconfig:
+      process.env.GRID_ARGO_KUBECONFIG ||
+      process.env.KUBECONFIG ||
+      '',
+    context: process.env.GRID_ARGO_CONTEXT || '',
+    /** argocd | openshift-gitops */
+    namespace: process.env.GRID_ARGO_NAMESPACE || 'argocd',
+    kubectlBin: process.env.GRID_KUBECTL_BIN || 'kubectl',
+  },
   /** Optional GitOps bootstrap (also settable via API) */
   gitops: {
     repoUrl: process.env.GRID_GITOPS_REPO_URL || '',

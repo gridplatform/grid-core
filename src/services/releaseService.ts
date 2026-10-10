@@ -22,6 +22,10 @@ import {
   cleanupPartialTerraform,
   runLifecycle,
 } from './lifecycleService';
+import {
+  isKubernetesInfrastructure,
+  runKubernetesLifecycle,
+} from './argo/kubernetesLifecycle';
 import { killTrackedProcesses, releaseRunKey, trackChildProcess } from './processRegistry';
 import { getApprovalRequired, modeRequiresApprovalGate } from './approvalPolicyStore';
 import {
@@ -202,9 +206,10 @@ async function executeRelease(releaseId: string): Promise<void> {
     }
 
     const mode = release.mode;
+    const k8s = isKubernetesInfrastructure(infra) || release.type === 'kubernetes';
     const deployment = await createDeployment(infra.id, release.createdBy, {
       name: release.name,
-      engine: 'terraform',
+      engine: k8s ? 'kubernetes' : 'terraform',
       resourceType: release.mode,
       provider: infra.provider,
       environment: release.environment || infra.environment,
@@ -212,10 +217,16 @@ async function executeRelease(releaseId: string): Promise<void> {
     });
 
     release.deploymentId = deployment.id;
+    if (k8s) release.type = 'kubernetes';
     await saveRelease(release);
     await appendReleaseLog(release.id, `[grid] linked deployment ${deployment.id}`);
 
-    await runLifecycle(infra, deployment, mode);
+    if (k8s) {
+      await appendReleaseLog(release.id, '[grid] engine=kubernetes (Argo CD / OpenShift GitOps)');
+      await runKubernetesLifecycle(infra, deployment, mode);
+    } else {
+      await runLifecycle(infra, deployment, mode);
+    }
 
     const latest = (await getRelease(release.id))!;
     if (latest.status === 'cancelled') return;
@@ -308,6 +319,13 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
 
   const active = needsApproval ? undefined : await findActiveRelease();
 
+  let releaseType: import('../types/api').ReleaseType = 'terraform';
+  if (input.mode === 'custom') releaseType = 'custom';
+  else if (input.infrastructureId) {
+    const infra = await getInfrastructure(input.infrastructureId);
+    if (infra && isKubernetesInfrastructure(infra)) releaseType = 'kubernetes';
+  }
+
   const { createRelease } = await import('./releaseStore');
   const release = await createRelease({
     name:
@@ -315,7 +333,7 @@ export async function enqueueRelease(input: CreateReleaseInput): Promise<Release
       (input.mode === 'custom'
         ? 'Custom CLI release'
         : `${infrastructureName || 'infra'} (${input.mode})`),
-    type: input.mode === 'custom' ? 'custom' : 'terraform',
+    type: releaseType,
     mode: input.mode,
     environment: input.environment,
     infrastructureId: input.infrastructureId,

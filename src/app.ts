@@ -8,6 +8,11 @@ import gitops from './routes/gitops';
 import auth from './routes/auth';
 import { attachAuth } from './middleware/requireAuth';
 import { isHttpError } from './lib/httpError';
+import { formatLogTimestampStyled, installConsoleTimestamps } from './lib/log';
+
+installConsoleTimestamps();
+
+morgan.token('grid-date', () => formatLogTimestampStyled());
 
 export function createApp() {
   const app = express();
@@ -15,7 +20,10 @@ export function createApp() {
   app.use(helmet());
   app.use(cors());
   app.use(express.json({ limit: '2mb' }));
-  app.use(morgan('dev'));
+  // Pretty access log with local timestamp (morgan writes stdout — not console).
+  app.use(
+    morgan(':grid-date :method :url :status :response-time ms - :res[content-length]')
+  );
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });

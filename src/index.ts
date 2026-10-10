@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs-extra';
+import { installConsoleTimestamps } from './lib/log';
 import { createApp } from './app';
 import { config } from './config';
 import { ensureBootstrapAdmin } from './auth/authService';
@@ -23,6 +24,8 @@ import {
   assertTfBackendConfigOrThrow,
 } from './validateProduction';
 import { assertArchiveMirrorReady } from './services/archiveMirror';
+
+installConsoleTimestamps();
 
 async function main() {
   await fs.ensureDir(config.dataDir);

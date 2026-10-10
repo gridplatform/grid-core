@@ -28,48 +28,85 @@ function runCapture(
   });
 }
 
-async function ensureGenerated(infra: Infrastructure, generatedDir: string): Promise<number> {
-  // Prefer the same archive/ layout as lifecycle (gitPath or derived metadata).
-  let gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (!gitPath) {
-    const cfg = infra.configJson || {};
-    const meta = (cfg.metadata || {}) as { name?: string; environment?: string };
-    const project = (infra.project || 'default').toLowerCase();
-    const provider = String(infra.provider || cfg.provider || 'aws').toLowerCase();
-    const environment = (infra.environment || meta.environment || 'development').toLowerCase();
-    const name = (meta.name || infra.name || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
-    const resources = cfg.resources as Array<{ type?: string }> | undefined;
-    const type = (resources?.[0]?.type || 'unit').toLowerCase();
-    if (name) gitPath = `projects/${project}/${provider}/${environment}/${type}/${name}.json`;
+function slugSegment(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Same archive/ layout as lifecycleService — drift must run terraform where
+ * generate wrote files (and where remote state is keyed).
+ */
+export function resolveDriftTerraformDirs(infra: Infrastructure): {
+  configPath: string;
+  terraformDir: string;
+  writeArchive: boolean;
+  derivedGitPath?: string;
+} {
+  const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')) {
+    const unitRel = gitPath.replace(/\.json$/i, '');
+    return {
+      configPath: path.join(config.configRoot, gitPath),
+      terraformDir: path.join(config.configRoot, 'archive', unitRel),
+      writeArchive: true,
+    };
   }
-  const writeArchive = Boolean(
-    gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')
+
+  const cfg = infra.configJson || {};
+  const meta = (cfg.metadata || {}) as { name?: string; environment?: string };
+  const project = slugSegment(infra.project || 'default');
+  const provider = slugSegment(String(infra.provider || cfg.provider || 'aws'));
+  const environment = slugSegment(
+    infra.environment || meta.environment || 'development'
   );
-
-  let configPath: string;
-  let terraformDir = generatedDir;
-  if (writeArchive && gitPath) {
-    configPath = path.join(config.configRoot, gitPath);
-    terraformDir = path.join(config.configRoot, 'archive', gitPath.replace(/\.json$/i, ''));
-  } else {
-    const workspace = path.join(config.workDir, infra.id);
-    await fs.ensureDir(workspace);
-    configPath = path.join(workspace, 'grid.json');
+  const name = slugSegment(meta.name || infra.name || '');
+  const resources = cfg.resources as Array<{ type?: string }> | undefined;
+  const type = slugSegment(resources?.[0]?.type || 'unit');
+  if (project && provider && environment && type && name) {
+    const unitRel = `projects/${project}/${provider}/${environment}/${type}/${name}`;
+    const derivedGitPath = `${unitRel}.json`;
+    return {
+      configPath: path.join(config.configRoot, derivedGitPath),
+      terraformDir: path.join(config.configRoot, 'archive', unitRel),
+      writeArchive: true,
+      derivedGitPath,
+    };
   }
 
-  await fs.ensureDir(path.dirname(configPath));
-  await writeJsonAtomic(configPath, infra.configJson);
-  await fs.ensureDir(terraformDir);
+  const workspace = path.join(config.workDir, infra.id);
+  return {
+    configPath: path.join(workspace, 'grid.json'),
+    terraformDir: path.join(workspace, 'generated'),
+    writeArchive: false,
+  };
+}
+
+async function ensureGenerated(
+  infra: Infrastructure
+): Promise<{ code: number; terraformDir: string; stderr: string }> {
+  const dirs = resolveDriftTerraformDirs(infra);
+  if (dirs.derivedGitPath && !infra.gitPath) {
+    infra.gitPath = dirs.derivedGitPath;
+    infra.updatedAt = new Date().toISOString();
+    await saveInfrastructure(infra);
+  }
+
+  await fs.ensureDir(path.dirname(dirs.configPath));
+  await writeJsonAtomic(dirs.configPath, infra.configJson);
+  await fs.ensureDir(dirs.terraformDir);
 
   const cliEntryJs = path.join(config.cliRoot, 'dist', 'index.js');
   const cliEntryTs = path.join(config.cliRoot, 'src', 'index.ts');
   const useCompiled = await fs.pathExists(cliEntryJs);
 
-  const args = ['generate', '--config', configPath, '--format', 'terraform'];
-  if (writeArchive) {
+  const args = ['generate', '--config', dirs.configPath, '--format', 'terraform'];
+  if (dirs.writeArchive) {
     args.push('--config-dir', config.configRoot);
   } else {
-    args.push('--output', terraformDir);
+    args.push('--output', dirs.terraformDir);
   }
 
   const bin = useCompiled
@@ -77,7 +114,12 @@ async function ensureGenerated(infra: Infrastructure, generatedDir: string): Pro
     : path.join(config.cliRoot, 'node_modules', '.bin', 'tsx');
   const entry = useCompiled ? cliEntryJs : cliEntryTs;
 
-  return (await runCapture(bin, [entry, ...args], config.cliRoot)).code;
+  const result = await runCapture(bin, [entry, ...args], config.cliRoot);
+  return {
+    code: result.code,
+    terraformDir: dirs.terraformDir,
+    stderr: result.stderr || result.stdout,
+  };
 }
 
 /**
@@ -101,31 +143,81 @@ export async function checkInfrastructureDrift(infra: Infrastructure): Promise<D
       'If live is correct, update the Grid JSON in your Git repo to match reality, commit, then Sync. Automatic reverse-map from state → full Grid JSON is limited; use the state inventory + Plan excerpt.',
   };
 
-  const gitPath = infra.gitPath?.replace(/\\/g, '/').replace(/^\.\//, '');
-  const workspaceGenerated =
-    gitPath && !gitPath.startsWith('archive/') && gitPath.endsWith('.json')
-      ? path.join(config.configRoot, 'archive', gitPath.replace(/\.json$/i, ''))
-      : path.join(config.workDir, infra.id, 'generated');
+  let gen: { code: number; terraformDir: string; stderr: string };
+  try {
+    gen = await ensureGenerated(infra);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      infrastructureId: infra.id,
+      kind: 'unknown',
+      hasDrift: true,
+      gitChangedSinceApply: gitChangedSinceApply || localUnapplied,
+      summary: `Drift check failed while generating Terraform: ${msg}`,
+      changes: [msg],
+      actions,
+      checkedAt: new Date().toISOString(),
+    };
+  }
 
-  const genCode = await ensureGenerated(infra, workspaceGenerated);
-  if (genCode !== 0) {
+  if (gen.code !== 0) {
     return {
       infrastructureId: infra.id,
       kind: 'unknown',
       hasDrift: true,
       gitChangedSinceApply: gitChangedSinceApply || localUnapplied,
       summary: 'Could not generate Terraform from desired JSON — fix config before drift check.',
-      changes: ['grid generate failed'],
+      changes: [
+        'grid generate failed',
+        ...(gen.stderr ? [gen.stderr.slice(0, 2000)] : []),
+      ],
       actions,
       checkedAt: new Date().toISOString(),
     };
   }
 
-  await runCapture(config.terraformBin, ['init', '-input=false'], workspaceGenerated);
+  const terraformDir = gen.terraformDir;
+  const hasTf = (await fs.pathExists(path.join(terraformDir, 'main.tf'))) ||
+    (await fs.pathExists(path.join(terraformDir, 'versions.tf'))) ||
+    (await fs.readdir(terraformDir).catch(() => [])).some((f) => f.endsWith('.tf'));
+
+  if (!hasTf) {
+    return {
+      infrastructureId: infra.id,
+      kind: 'unknown',
+      hasDrift: true,
+      gitChangedSinceApply: gitChangedSinceApply || localUnapplied,
+      summary: `Generate reported success but no .tf files in ${terraformDir}`,
+      changes: [`Expected Terraform under ${terraformDir}`],
+      actions,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  const init = await runCapture(
+    config.terraformBin,
+    ['init', '-input=false', '-no-color'],
+    terraformDir
+  );
+  if (init.code !== 0) {
+    const detail = (init.stderr || init.stdout || '').slice(0, 4000);
+    return {
+      infrastructureId: infra.id,
+      kind: 'unknown',
+      hasDrift: true,
+      gitChangedSinceApply: gitChangedSinceApply || localUnapplied,
+      summary: 'Drift check failed: terraform init error (credentials, backend, or modules).',
+      changes: [detail || `terraform init exited ${init.code}`],
+      planExcerpt: detail,
+      actions,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   const plan = await runCapture(
     config.terraformBin,
     ['plan', '-input=false', '-no-color', '-detailed-exitcode'],
-    workspaceGenerated
+    terraformDir
   );
 
   const excerpt = (plan.stdout || plan.stderr || '').slice(0, 20_000);
@@ -139,7 +231,11 @@ export async function checkInfrastructureDrift(infra: Infrastructure): Promise<D
     );
   }
 
-  const show = await runCapture(config.terraformBin, ['show', '-json'], workspaceGenerated);
+  const show = await runCapture(
+    config.terraformBin,
+    ['show', '-json'],
+    terraformDir
+  );
   if (show.code === 0 && show.stdout.trim()) {
     try {
       const state = JSON.parse(show.stdout) as {
@@ -187,7 +283,7 @@ export async function checkInfrastructureDrift(infra: Infrastructure): Promise<D
           : 'Live drift: Terraform state does not match desired JSON (manual cloud edits or partial apply).',
       changes: changes.length
         ? changes
-        : ['Terraform plan reported changes (exit code 2). Run Plan in the UI for full logs.'],
+        : ['Terraform plan reported changes (exit code 2). See plan excerpt below.'],
       planExcerpt: excerpt.slice(0, 8000),
       actions,
       checkedAt: new Date().toISOString(),
@@ -200,7 +296,9 @@ export async function checkInfrastructureDrift(infra: Infrastructure): Promise<D
     hasDrift: true,
     gitChangedSinceApply: gitChangedSinceApply || localUnapplied,
     summary: `Drift check failed (terraform exit ${plan.code}). Check credentials and module bank.`,
-    changes: [plan.stderr.slice(0, 2000) || plan.stdout.slice(0, 2000) || 'Unknown terraform error'],
+    changes: [
+      (plan.stderr || plan.stdout || 'Unknown terraform error').slice(0, 2000),
+    ],
     planExcerpt: excerpt.slice(0, 4000),
     actions,
     checkedAt: new Date().toISOString(),
