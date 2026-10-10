@@ -237,16 +237,3 @@ export function familyForResourceType(resourceType: string): TerraformFamily | n
   return null;
 }
 
-/**
- * Composer types: mapper expands into VPC/subnet/(VM) topology.
- * Other catalog types use generic module-var passthrough.
- */
-export const NETWORK_COMPOSER_TYPES = new Set(['vpc', 'network', 'subnet']);
-
-export const COMPUTE_COMPOSER_TYPES = new Set([
-  'vm',
-  'ec2-instance',
-  'compute-engine-instance',
-  'virtual-machine',
-  'single-vm',
-]);

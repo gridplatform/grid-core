@@ -1,31 +1,91 @@
 import { describe, expect, it } from 'vitest';
 import {
+  orderResourcesPrimaryFirst,
   pickPrimaryResourceType,
   resolveResourceType,
 } from '../src/services/resourceType';
 
 describe('pickPrimaryResourceType', () => {
-  it('prefers vm over leading security-group', () => {
+  it('matches declared unit kind over other resources', () => {
+    expect(
+      pickPrimaryResourceType(
+        [
+          { type: 'alpha-helper' },
+          { type: 'unit-main' },
+          { type: 'beta-helper' },
+        ],
+        'unit-main'
+      )
+    ).toBe('unit-main');
+  });
+
+  it('honors explicit role=primary', () => {
+    expect(
+      pickPrimaryResourceType(
+        [
+          { type: 'alpha', role: 'support' },
+          { type: 'beta', role: 'primary' },
+        ],
+        'gamma'
+      )
+    ).toBe('beta');
+  });
+
+  it('skips role=support when inferring without kind', () => {
     expect(
       pickPrimaryResourceType([
-        { type: 'security-group' },
-        { type: 'vm' },
+        { type: 'helper', role: 'support' },
+        { type: 'main-thing' },
       ])
-    ).toBe('vm');
+    ).toBe('main-thing');
+  });
+});
+
+describe('orderResourcesPrimaryFirst', () => {
+  it('orders by unit kind, then keeps relative order of the rest', () => {
+    const ordered = orderResourcesPrimaryFirst(
+      [
+        { type: 'helper-a', name: 'a' },
+        { type: 'unit-main', name: 'main' },
+        { type: 'helper-b', name: 'b' },
+      ],
+      'unit-main'
+    );
+    expect(ordered.map((r) => r.type)).toEqual([
+      'unit-main',
+      'helper-a',
+      'helper-b',
+    ]);
   });
 });
 
 describe('resolveResourceType', () => {
-  it('prefers primary resource over resources[0] supporting type', () => {
+  it('labels unit by stamped metadata.kind', () => {
     expect(
       resolveResourceType({
         configJson: {
-          resources: [{ type: 'security-group' }, { type: 'vm' }],
+          metadata: { kind: 'unit-main', name: 'demo' },
+          resources: [
+            { type: 'helper-a' },
+            { type: 'unit-main' },
+            { type: 'helper-b' },
+          ],
         },
-        gitPath: 'projects/demo/aws/dev/ec2/lab.json',
-        name: 'ignored',
       })
-    ).toBe('ec2');
+    ).toBe('unit-main');
+  });
+
+  it('infers primary from resources when kind is absent', () => {
+    expect(
+      resolveResourceType({
+        configJson: {
+          resources: [
+            { type: 'helper', role: 'support' },
+            { type: 'anything-primary' },
+          ],
+        },
+      })
+    ).toBe('anything-primary');
   });
 
   it('uses single resources[0].type when alone', () => {
@@ -33,7 +93,6 @@ describe('resolveResourceType', () => {
       resolveResourceType({
         configJson: { resources: [{ type: 'EKS' }] },
         gitPath: 'projects/demo/aws/dev/vpc/main.json',
-        name: 'ignored',
       })
     ).toBe('eks');
   });

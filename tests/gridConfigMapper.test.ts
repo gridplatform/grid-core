@@ -54,13 +54,40 @@ describe('mapDeployRequestToGridConfig', () => {
     });
     expect(mapped.displayProvider).toBe('AWS');
     expect(mapped.gridConfig.resources).toEqual([{ type: 'vpc', name: 'main' }]);
-    expect((mapped.gridConfig.metadata as { environment: string }).environment).toBe(
+    expect((mapped.gridConfig.metadata as { environment: string; kind: string }).environment).toBe(
       'staging'
+    );
+    expect((mapped.gridConfig.metadata as { kind: string }).kind).toBe('vpc');
+  });
+
+  it('reorders by declared unit kind; stamps metadata.kind', () => {
+    const mapped = mapDeployRequestToGridConfig({
+      name: 'demo',
+      engine: 'terraform',
+      provider: 'gcp',
+      environment: 'development',
+      resourceType: 'unit-main',
+      config: {
+        region: 'us-central1',
+        resources: [
+          { type: 'helper-a', name: 'a' },
+          { type: 'unit-main', name: 'main' },
+          { type: 'helper-b', name: 'b' },
+        ],
+      },
+    });
+    const types = (mapped.gridConfig.resources as Array<{ type: string }>).map(
+      (r) => r.type
+    );
+    expect(types[0]).toBe('unit-main');
+    expect(types).toEqual(['unit-main', 'helper-a', 'helper-b']);
+    expect((mapped.gridConfig.metadata as { kind: string }).kind).toBe(
+      'unit-main'
     );
   });
 
-  it('composes network types into vpc + subnet resources', () => {
-    const mapped = mapDeployRequestToGridConfig({
+  it('maps any catalog type to a single primary (no special recipes)', () => {
+    const vpc = mapDeployRequestToGridConfig({
       name: 'Edge Net',
       engine: 'terraform',
       provider: 'aws',
@@ -68,12 +95,28 @@ describe('mapDeployRequestToGridConfig', () => {
       resourceType: 'vpc',
       config: { region: 'ap-south-1', cidr: '10.50.0.0/16' },
     });
-    const resources = mapped.gridConfig.resources as Array<{ type: string }>;
-    expect(resources.some((r) => r.type === 'vpc')).toBe(true);
-    expect(resources.some((r) => r.type === 'subnet')).toBe(true);
+    const vpcResources = vpc.gridConfig.resources as Array<Record<string, unknown>>;
+    expect(vpcResources).toHaveLength(1);
+    expect(vpcResources[0].type).toBe('vpc');
+    expect(vpcResources[0].cidr).toBe('10.50.0.0/16');
+    expect((vpc.gridConfig.metadata as { kind: string }).kind).toBe('vpc');
+
+    const vm = mapDeployRequestToGridConfig({
+      name: 'lab-vm',
+      engine: 'terraform',
+      provider: 'oracle',
+      environment: 'development',
+      resourceType: 'vm',
+      config: { region: 'us-ashburn-1', subnet: 'labs-public' },
+    });
+    const vmResources = vm.gridConfig.resources as Array<Record<string, unknown>>;
+    expect(vmResources).toHaveLength(1);
+    expect(vmResources[0].type).toBe('vm');
+    expect(vmResources[0].subnet).toBe('labs-public');
+    expect((vm.gridConfig.metadata as { kind: string }).kind).toBe('vm');
   });
 
-  it('maps generic module types to a single resource', () => {
+  it('maps generic module types to a single primary resource', () => {
     const mapped = mapDeployRequestToGridConfig({
       name: 'My Bucket',
       engine: 'terraform',

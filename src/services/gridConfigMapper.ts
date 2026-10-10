@@ -1,6 +1,6 @@
 import type { CloudProviderType } from '../types/api';
 import { normalizeProviderId } from '../config/providers';
-import { COMPUTE_COMPOSER_TYPES, NETWORK_COMPOSER_TYPES } from './terraformResourceCatalog';
+import { orderResourcesPrimaryFirst } from './resourceType';
 
 export type DeployEngine = 'terraform' | 'kubernetes';
 
@@ -30,10 +30,6 @@ export class DeployMapError extends Error {
 
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;
-}
-
-function asNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function toDisplayProvider(providerId: string): CloudProviderType {
@@ -73,6 +69,33 @@ const TOP_LEVEL_CONFIG_KEYS = new Set([
   'description',
 ]);
 
+function withOrderedResources(
+  gridConfig: Record<string, unknown>,
+  unitKind: string
+): Record<string, unknown> {
+  const resources = gridConfig.resources;
+  const metadata =
+    gridConfig.metadata && typeof gridConfig.metadata === 'object'
+      ? (gridConfig.metadata as Record<string, unknown>)
+      : {};
+  const withKind = {
+    ...gridConfig,
+    metadata: {
+      ...metadata,
+      // Declared unit kind — primary identity for every domain.
+      kind: unitKind,
+    },
+  };
+  if (!Array.isArray(resources) || resources.length === 0) return withKind;
+  return {
+    ...withKind,
+    resources: orderResourcesPrimaryFirst(
+      resources as Array<Record<string, unknown> & { type?: unknown }>,
+      unitKind
+    ),
+  };
+}
+
 /**
  * Map a deploy request to a Kubernetes workload intent (Argo Application input).
  * Cluster / node-pool units stay on the terraform engine path.
@@ -99,10 +122,7 @@ function mapKubernetesDeployRequest(req: GridDeployRequest): MappedDeploy {
     cfg.destination && typeof cfg.destination === 'object'
       ? (cfg.destination as Record<string, unknown>)
       : {};
-  const namespace = asString(
-    destIn.namespace ?? cfg.namespace,
-    ''
-  );
+  const namespace = asString(destIn.namespace ?? cfg.namespace, '');
   if (!namespace) {
     throw new DeployMapError('config.destination.namespace is required', 422);
   }
@@ -117,9 +137,7 @@ function mapKubernetesDeployRequest(req: GridDeployRequest): MappedDeploy {
     kind: asString(cfg.kind, req.resourceType || 'workload'),
     metadata: {
       name: asString(metaIn.name, req.name),
-      environment: toCliEnvironment(
-        asString(metaIn.environment, req.environment)
-      ),
+      environment: toCliEnvironment(asString(metaIn.environment, req.environment)),
       project: asString(metaIn.project ?? cfg.project, 'grid'),
       ...(typeof metaIn.clusterRef === 'string'
         ? { clusterRef: metaIn.clusterRef }
@@ -154,8 +172,11 @@ function mapKubernetesDeployRequest(req: GridDeployRequest): MappedDeploy {
 
 /**
  * Map a deploy request to grid.json.
- * Composer types expand to network/compute recipes; others pass through as module vars.
- * Deploy gating is UI-only (feature flags), not enforced here.
+ *
+ * Same path for every catalog type / provider:
+ * - `resourceType` = unit kind (primary)
+ * - client `config.resources` → ordered primary-first + stamped `metadata.kind`
+ * - otherwise → one primary resource; module inputs from config passthrough
  */
 export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDeploy {
   if (req.engine === 'kubernetes') {
@@ -173,115 +194,33 @@ export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDepl
     throw new DeployMapError('resourceType is required');
   }
 
-  if (Array.isArray(req.config.resources) && req.config.resources.length > 0) {
-    return {
-      displayProvider: toDisplayProvider(providerId),
-      gridConfig: {
-        provider: providerId,
-        project: asString(req.config.project, 'grid'),
-        region: asString(req.config.region, providerId === 'gcp' ? 'us-central1' : 'ap-south-1'),
-        resources: req.config.resources,
-        metadata: {
-          name: req.name,
-          environment: toCliEnvironment(req.environment),
-          description: asString(req.config.description, req.resourceType),
-        },
-      },
-    };
-  }
-
-  const name = slug(req.name);
   const region = asString(
     req.config.region,
     providerId === 'gcp' ? 'us-central1' : 'ap-south-1'
   );
   const project = asString(req.config.project, 'grid');
 
-  if (NETWORK_COMPOSER_TYPES.has(type)) {
-    const vpcName = `${name}-vpc`;
-    const cidr = asString(req.config.cidr, '10.40.0.0/16');
-    const subnets = Array.isArray(req.config.subnets)
-      ? (req.config.subnets as Array<Record<string, unknown>>)
-      : [{ name: `${name}-subnet`, cidr: '10.40.1.0/24' }];
-
-    const resources: Record<string, unknown>[] = [
-      { type: 'vpc', name: vpcName, cidr, description: `${req.name} network` },
-    ];
-
-    for (const s of subnets) {
-      resources.push({
-        type: 'subnet',
-        name: asString(s.name, `${name}-subnet`),
-        vpc: vpcName,
-        cidr: asString(s.cidr, '10.40.1.0/24'),
-        region,
-        description: asString(s.description, 'Grid subnet'),
-      });
-    }
-
+  if (Array.isArray(req.config.resources) && req.config.resources.length > 0) {
     return {
       displayProvider: toDisplayProvider(providerId),
-      gridConfig: {
-        provider: providerId,
-        project,
-        region,
-        resources,
-        metadata: {
-          name: req.name,
-          environment: toCliEnvironment(req.environment),
+      gridConfig: withOrderedResources(
+        {
+          provider: providerId,
+          project,
+          region,
+          resources: req.config.resources as Array<Record<string, unknown>>,
+          metadata: {
+            name: req.name,
+            environment: toCliEnvironment(req.environment),
+            description: asString(req.config.description, req.resourceType),
+          },
         },
-      },
+        type
+      ),
     };
   }
 
-  if (COMPUTE_COMPOSER_TYPES.has(type)) {
-    const vpcName = `${name}-vpc`;
-    const subnetName = `${name}-subnet`;
-    const machineType = asString(
-      req.config.instance_type ?? req.config.machineType ?? req.config.machine_type,
-      providerId === 'gcp' ? 'e2-medium' : 't3.micro'
-    );
-
-    return {
-      displayProvider: toDisplayProvider(providerId),
-      gridConfig: {
-        provider: providerId,
-        project,
-        region,
-        resources: [
-          {
-            type: 'vpc',
-            name: vpcName,
-            cidr: asString(req.config.vpc_cidr, '10.41.0.0/16'),
-            description: `Network for ${req.name}`,
-          },
-          {
-            type: 'subnet',
-            name: subnetName,
-            vpc: vpcName,
-            cidr: asString(req.config.subnet_cidr, '10.41.1.0/24'),
-            region,
-          },
-          {
-            type: 'vm',
-            name,
-            machineType,
-            subnet: subnetName,
-            zone: typeof req.config.zone === 'string' ? req.config.zone : undefined,
-            diskSize: asNumber(req.config.disk_size_gb ?? req.config.diskSize, 20),
-            image: typeof req.config.image === 'string' ? req.config.image : undefined,
-            tags: ['grid'],
-            description: req.name,
-          },
-        ],
-        metadata: {
-          name: req.name,
-          environment: toCliEnvironment(req.environment),
-        },
-      },
-    };
-  }
-
+  const name = slug(req.name);
   const moduleVars: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(req.config)) {
     if (TOP_LEVEL_CONFIG_KEYS.has(key) || value === undefined) continue;
@@ -290,22 +229,25 @@ export function mapDeployRequestToGridConfig(req: GridDeployRequest): MappedDepl
 
   return {
     displayProvider: toDisplayProvider(providerId),
-    gridConfig: {
-      provider: providerId,
-      project,
-      region,
-      resources: [
-        {
-          type,
-          name,
-          description: asString(req.config.description, req.name),
-          ...moduleVars,
+    gridConfig: withOrderedResources(
+      {
+        provider: providerId,
+        project,
+        region,
+        resources: [
+          {
+            type,
+            name,
+            description: asString(req.config.description, req.name),
+            ...moduleVars,
+          },
+        ],
+        metadata: {
+          name: req.name,
+          environment: toCliEnvironment(req.environment),
         },
-      ],
-      metadata: {
-        name: req.name,
-        environment: toCliEnvironment(req.environment),
       },
-    },
+      type
+    ),
   };
 }
