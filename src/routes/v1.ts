@@ -466,6 +466,17 @@ router.post('/deployments', async (req, res) => {
 
   const body = parsed.data;
 
+  // Entry-point gate: Terraform-first production release.
+  // Argo / engine=kubernetes code stays in services/argo — re-enable with UI flag later.
+  if (body.engine === 'kubernetes') {
+    res.status(501).json({
+      code: 'not_implemented',
+      message:
+        'Kubernetes workloads (Argo) are not enabled in this release. Use engine=terraform for infrastructure. See grid-core/docs/KUBERNETES.md.',
+    });
+    return;
+  }
+
   let mapped;
   try {
     mapped = mapDeployRequestToGridConfig(body);

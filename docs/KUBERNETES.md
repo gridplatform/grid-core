@@ -1,5 +1,11 @@
 # Kubernetes in Grid
 
+> **Production status (TF-first release):** In-cluster **Workloads** entry points
+> are gated off (UI `productFlags.kubernetesWorkloads`, API rejects
+> `engine=kubernetes`). Terraform **clusters / node pools** (EKS, GKE, …) stay
+> available under Infrastructure. Argo code under `src/services/argo/` remains
+> for a later release — do not delete it.
+
 Grid keeps **three layers** as separate desired-state files so you can destroy
 or change one piece without touching a thousand others.
 
