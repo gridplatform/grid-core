@@ -1,7 +1,6 @@
 import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs-extra';
-import { v5 as uuidv5 } from 'uuid';
 import type { Infrastructure } from '../types/api';
 import type { GitOpsSettings } from '../types/gitops';
 import {
@@ -18,9 +17,7 @@ import {
 import { hashContent } from './gitopsHash';
 import { providerFromConfig } from './providerLabels';
 import { projectSlugFromGitPath } from './projectsService';
-
-/** UUID v5 namespace for path → infra id */
-const GRID_GITOPS_NS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+import { ensureUnitIdInConfig } from './unitIdentity';
 
 function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -46,14 +43,6 @@ function nameFromConfig(cfg: Record<string, unknown>, fallback: string): string 
 function environmentFromConfig(cfg: Record<string, unknown>): string {
   const meta = cfg.metadata as { environment?: string } | undefined;
   return meta?.environment || (typeof cfg.environment === 'string' ? cfg.environment : 'dev');
-}
-
-function infraIdForPath(gitPath: string, cfg: Record<string, unknown>): string {
-  const explicit =
-    (cfg.id as string | undefined) ||
-    ((cfg.metadata as { id?: string } | undefined)?.id);
-  if (explicit && /^[0-9a-f-]{36}$/i.test(explicit)) return explicit;
-  return uuidv5(gitPath, GRID_GITOPS_NS);
 }
 
 async function discoverGridJsonFiles(
@@ -233,7 +222,8 @@ async function runGitOpsSyncInternal(): Promise<SyncResult> {
     for (const file of files) {
       seenPaths.add(file.gitPath);
       const cfg = (await fs.readJSON(file.abs)) as Record<string, unknown>;
-      const id = infraIdForPath(file.gitPath, cfg);
+      // Prefer metadata.id if set; else UUID v5(path). Never stamp into Git.
+      const { id } = ensureUnitIdInConfig(file.gitPath, cfg);
       const contentHash = hashContent(cfg);
       const existing = await getInfrastructure(id);
       const folderName = path.basename(path.dirname(file.gitPath));

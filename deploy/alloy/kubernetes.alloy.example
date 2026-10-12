@@ -1,0 +1,46 @@
+// Example kubernetes collector (any provider). Prefer API-generated unit configs.
+// GET /api/v1/monitoring/collector-config/:id
+
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+prometheus.scrape "nodes" {
+  targets    = discovery.kubernetes.nodes.targets
+  forward_to = [prometheus.relabel.grid.receiver]
+}
+
+prometheus.scrape "pods" {
+  targets    = discovery.kubernetes.pods.targets
+  forward_to = [prometheus.relabel.grid.receiver]
+}
+
+prometheus.relabel "grid" {
+  forward_to = [prometheus.remote_write.grid.receiver]
+  rule {
+    target_label = "grid_unit_id"
+    replacement  = "REPLACE_WITH_INFRASTRUCTURE_ID"
+  }
+  rule {
+    target_label = "grid_environment"
+    replacement  = "development"
+  }
+  rule {
+    target_label = "provider"
+    replacement  = "aws"
+  }
+  rule {
+    target_label = "resource_type"
+    replacement  = "eks"
+  }
+}
+
+prometheus.remote_write "grid" {
+  endpoint {
+    url = coalesce(sys.env("GRID_PROM_REMOTE_WRITE_URL"), "http://127.0.0.1:9090/api/v1/write")
+  }
+}

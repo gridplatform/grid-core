@@ -41,18 +41,27 @@ On Sync:
 2. Files that disappeared → infrastructure is marked **`stale`**.
 3. Destroy only happens via an **explicit** destroy (CLI `grid prune --destroy` or API `POST …/destroy`) with operator confirmation.
 
-Optional stable id:
+### Unit id — Grid / monitoring join key
+
+Terraform **state and archive stay path-based**. The unit id is only a join key
+for inventory, deployments, and `grid_unit_id` in metrics.
+
+**Default (no Git field, no database):** sync derives UUID v5 from the file path.
+Same path → same id after Grid `store.json` wipe or reinstall. Nothing to commit.
+
+**Optional** (only if you set it yourself — Grid does not auto-write this):
 
 ```json
 {
-  "metadata": { "id": "11111111-1111-1111-1111-111111111111", "name": "demo-vpc", "environment": "development" },
+  "metadata": { "id": "11111111-1111-4111-8111-111111111111", "name": "demo-vpc", "environment": "development" },
   "provider": "aws",
   "region": "ap-south-1",
   "resources": []
 }
 ```
 
-If omitted, Grid derives a stable UUID from the file path.
+Rename without TF state/archive migrate still breaks **state** addressing
+(path-based by design). An ID DB is not required for path-stable monitoring.
 
 ## Operator flow
 

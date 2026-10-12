@@ -1,0 +1,29 @@
+[Unit]
+Description=Prometheus metrics store (independent of Grid)
+Documentation=https://prometheus.io/docs/prometheus/latest/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+WorkingDirectory=/var/lib/prometheus
+ExecStart=/opt/prometheus/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --web.listen-address=0.0.0.0:9090 \
+  --web.enable-lifecycle \
+  --web.enable-remote-write-receiver
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/prometheus
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

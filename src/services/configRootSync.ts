@@ -1,6 +1,5 @@
 import path from 'path';
 import fs from 'fs-extra';
-import { v5 as uuidv5 } from 'uuid';
 import { config } from '../config';
 import { writeJsonAtomic } from '../lib/jsonFile';
 import type { Infrastructure, ResourceStatus } from '../types/api';
@@ -15,8 +14,8 @@ import { hashContent } from './gitopsHash';
 import { projectSlugFromGitPath } from './projectsService';
 import { KNOWN_CLOUD_SEGMENTS, providerFromConfig } from './providerLabels';
 import { invalidateConfigDiscoveryCache } from './configDiscovery';
+import { ensureUnitIdInConfig } from './unitIdentity';
 
-const NS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const SKIP_DIRS = new Set(['.git', '.grid', 'node_modules', 'scripts', 'archive']);
 
 function nameFromConfig(cfg: Record<string, unknown>, fallback: string): string {
@@ -154,22 +153,27 @@ async function runConfigRootSync(): Promise<SyncStats> {
         }
         if (typeof cfg.provider !== 'string' || !Array.isArray(cfg.resources)) return 0;
 
-        const id = uuidv5(file.gitPath, NS);
-        const contentHash = hashContent(cfg);
+        // Join key: metadata.id if present, else UUID v5(gitPath). Do not write
+        // id back into desired-state (operators should not need to commit it).
+        // TF state / archive stay path-based. Path derivation alone is durable
+        // across Grid store wipe — same path → same id, no DB required.
+        const { id } = ensureUnitIdInConfig(file.gitPath, cfg);
+        const unitCfg = cfg;
+        const contentHash = hashContent(unitCfg);
         const folderName = path.basename(path.dirname(file.gitPath));
         const existing = await getInfrastructure(id);
         const project =
-          (typeof (cfg.metadata as { project?: string } | undefined)?.project === 'string'
-            ? (cfg.metadata as { project: string }).project
+          (typeof (unitCfg.metadata as { project?: string } | undefined)?.project === 'string'
+            ? (unitCfg.metadata as { project: string }).project
             : null) || projectSlugFromGitPath(file.gitPath);
 
         if (!existing) {
           await createInfrastructure({
             id,
-            name: nameFromConfig(cfg, folderName),
-            environment: environmentFromConfig(cfg, file.gitPath),
-            provider: providerFromConfig(cfg),
-            configJson: cfg,
+            name: nameFromConfig(unitCfg, folderName),
+            environment: environmentFromConfig(unitCfg, file.gitPath),
+            provider: providerFromConfig(unitCfg),
+            configJson: unitCfg,
             status: 'pending',
             autoApprove: true,
             driftDetection: true,
@@ -197,10 +201,10 @@ async function runConfigRootSync(): Promise<SyncStats> {
 
           await saveInfrastructure({
             ...existing,
-            name: nameFromConfig(cfg, existing.name),
-            environment: environmentFromConfig(cfg, file.gitPath),
-            provider: providerFromConfig(cfg),
-            configJson: cfg,
+            name: nameFromConfig(unitCfg, existing.name),
+            environment: environmentFromConfig(unitCfg, file.gitPath),
+            provider: providerFromConfig(unitCfg),
+            configJson: unitCfg,
             gitPath: file.gitPath,
             gitContentHash: contentHash,
             project,

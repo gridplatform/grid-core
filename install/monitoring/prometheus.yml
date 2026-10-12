@@ -1,0 +1,10 @@
+# Standalone metrics store for Grid Monitoring.
+# Not part of the Grid control-plane Compose project — survives `docker compose down` on Grid.
+#
+# Scrapes are optional here; fleet agents (Alloy) typically remote_write into this Prometheus.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs: []

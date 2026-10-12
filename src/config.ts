@@ -100,6 +100,19 @@ export const config = {
     namespace: process.env.GRID_ARGO_NAMESPACE || 'argocd',
     kubectlBin: process.env.GRID_KUBECTL_BIN || 'kubectl',
   },
+  /**
+   * Prometheus-compatible metrics API for Monitoring.
+   * Unset URL → health from inventory status.
+   * Set URL → health from `up` series joined by `grid_unit_id` (any provider).
+   */
+  prometheus: {
+    url: (process.env.GRID_PROMETHEUS_URL || '').trim().replace(/\/+$/, ''),
+    bearerToken: process.env.GRID_PROMETHEUS_BEARER_TOKEN || '',
+    basicUser: process.env.GRID_PROMETHEUS_BASIC_USER || '',
+    basicPassword: process.env.GRID_PROMETHEUS_BASIC_PASSWORD || '',
+    timeoutMs: Number(process.env.GRID_PROMETHEUS_TIMEOUT_MS || 8_000),
+    cacheTtlMs: Number(process.env.GRID_PROMETHEUS_CACHE_TTL_MS || 20_000),
+  },
   /** Optional GitOps bootstrap (also settable via API) */
   gitops: {
     repoUrl: process.env.GRID_GITOPS_REPO_URL || '',

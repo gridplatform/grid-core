@@ -62,6 +62,10 @@ import {
   listInventoryAlerts,
   listMonitoringDashboards,
 } from '../services/monitoringService';
+import {
+  buildCollectorConfig,
+  writeCollectorConfig,
+} from '../services/monitoring/collectorConfigService';
 import { getSystemVersionInfo } from '../services/systemInfoService';
 
 const router = Router();
@@ -897,7 +901,11 @@ router.get('/monitoring/alerts', async (_req, res) => {
 });
 
 router.get('/monitoring/metrics/:infra', async (req, res) => {
-  const series = await getInfraMetrics(req.params.infra);
+  const range =
+    typeof req.query.range === 'string' && req.query.range.trim()
+      ? req.query.range.trim()
+      : '1h';
+  const series = await getInfraMetrics(req.params.infra, range);
   if (!series) {
     res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
     return;
@@ -908,15 +916,37 @@ router.get('/monitoring/metrics/:infra', async (req, res) => {
 router.post('/monitoring/alerts', (_req, res) => {
   res.status(501).json({
     code: 'not_implemented',
-    message: 'Custom alert rules are not enabled; alerts are derived from inventory status',
+    message:
+      'Custom alert rules are not enabled; alerts are derived from metrics health or inventory status',
   });
 });
 
-router.post('/monitoring/setup/:infra', (_req, res) => {
-  res.status(501).json({
-    code: 'not_implemented',
-    message: 'External monitoring setup is not enabled; health is served from inventory',
-  });
+/** Preview Alloy collector config for a unit (does not write files). */
+router.get('/monitoring/collector-config/:infra', async (req, res) => {
+  const built = await buildCollectorConfig(req.params.infra);
+  if (!built) {
+    res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+    return;
+  }
+  res.json(built);
+});
+
+/**
+ * Materialize Alloy collector config under GRID_CONFIG_ROOT/monitoring/…
+ * Does not install Alloy on the target — GitOps / ops apply the file.
+ */
+router.post('/monitoring/setup/:infra', async (req, res) => {
+  try {
+    const built = await writeCollectorConfig(req.params.infra);
+    if (!built) {
+      res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+      return;
+    }
+    res.status(201).json(built);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ code: 'collector_setup_error', message });
+  }
 });
 
 router.get('/monitoring/dashboards', async (_req, res) => {

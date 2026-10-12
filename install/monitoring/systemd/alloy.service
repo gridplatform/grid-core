@@ -1,0 +1,27 @@
+[Unit]
+Description=Grafana Alloy metrics collector (independent of Grid)
+Documentation=https://grafana.com/docs/alloy/latest/
+After=network-online.target prometheus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alloy
+Group=alloy
+WorkingDirectory=/var/lib/alloy
+EnvironmentFile=-/etc/grid/monitoring.env
+ExecStart=/opt/alloy/alloy run /etc/alloy/config.alloy \
+  --storage.path=/var/lib/alloy \
+  --server.http.listen-addr=127.0.0.1:12345
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/alloy
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

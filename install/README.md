@@ -19,6 +19,7 @@ Guides: [grid-docs / docs/install](https://github.com/gridplatform/grid-docs/tre
 | `systemd/grid-core.service` | Native API unit |
 | `systemd/grid-ui.service` | Optional native UI unit |
 | `nginx-host.conf` | Native reverse proxy |
+| `monitoring/` | **systemd** Prometheus + Alloy (not Compose) — survives Grid stop/down |
 | `../Dockerfile` | Core image (CLI + Terraform) |
 
 Remote state before apply: [remote-state.md](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md).  

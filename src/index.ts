@@ -87,6 +87,11 @@ async function main() {
     if (config.gitops.repoUrl) {
       console.log(`GitOps remote: ${config.gitops.repoUrl} (${config.gitops.branch})`);
     }
+    if (config.prometheus.url) {
+      console.log(`Metrics API:   ${config.prometheus.url}`);
+    } else {
+      console.log('Metrics API:   (unset — Monitoring uses inventory status)');
+    }
     if (config.configRootIsDemoFixture) {
       console.warn(
         '[grid-core] GRID_CONFIG_ROOT is the demo-infra test fixture — not a customer config. ' +

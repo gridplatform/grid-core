@@ -30,11 +30,12 @@ Terraform decides create / change / destroy from JSON vs state. Grid exposes tha
 
 ```bash
 cd grid-cli
-grid generate -c examples/simple-vpc-vm-aws.json -o ./generated --format terraform
-grid plan    -c examples/simple-vpc-vm-aws.json -o ./generated --format terraform
-grid deploy  -c examples/simple-vpc-vm-aws.json -o ./generated --format terraform --auto-approve
+# unit.json = desired-state file (e.g. from grid-config)
+grid generate -c /path/to/unit.json -o ./generated --format terraform
+grid plan    -c /path/to/unit.json -o ./generated --format terraform
+grid deploy  -c /path/to/unit.json -o ./generated --format terraform --auto-approve
 # edit the JSON, then plan/deploy again to converge
-grid destroy -c examples/simple-vpc-vm-aws.json -o ./generated --format terraform --auto-approve
+grid destroy -c /path/to/unit.json -o ./generated --format terraform --auto-approve
 ```
 
 ## Live logs
