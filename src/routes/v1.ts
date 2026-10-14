@@ -66,6 +66,15 @@ import {
   buildCollectorConfig,
   writeCollectorConfig,
 } from '../services/monitoring/collectorConfigService';
+import {
+  deleteAlertChannel,
+  deleteAlertRule,
+  listAlertChannels,
+  listAlertRules,
+  syncAlertConfigToHost,
+  upsertAlertChannel,
+  upsertAlertRule,
+} from '../services/monitoring/alertConfigService';
 import { getSystemVersionInfo } from '../services/systemInfoService';
 
 const router = Router();
@@ -900,6 +909,85 @@ router.get('/monitoring/alerts', async (_req, res) => {
   res.json(await listInventoryAlerts());
 });
 
+router.get('/monitoring/alert-rules', async (_req, res) => {
+  res.json(await listAlertRules());
+});
+
+router.post('/monitoring/alert-rules', async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const condition = typeof body.condition === 'string' ? body.condition.trim() : '';
+  if (!name || !condition) {
+    res.status(400).json({ code: 'invalid_body', message: 'name and condition are required' });
+    return;
+  }
+  const rule = await upsertAlertRule({
+    id: typeof body.id === 'string' ? body.id : undefined,
+    name,
+    description: typeof body.description === 'string' ? body.description : '',
+    condition,
+    forDuration: typeof body.forDuration === 'string' ? body.forDuration : '5m',
+    severity:
+      body.severity === 'critical' || body.severity === 'warning' || body.severity === 'info'
+        ? body.severity
+        : 'warning',
+    channelIds: Array.isArray(body.channelIds)
+      ? body.channelIds.filter((x): x is string => typeof x === 'string')
+      : [],
+    enabled: body.enabled !== false,
+  });
+  res.status(201).json(rule);
+});
+
+router.delete('/monitoring/alert-rules/:id', async (req, res) => {
+  const ok = await deleteAlertRule(req.params.id);
+  if (!ok) {
+    res.status(404).json({ code: 'not_found', message: 'Rule not found' });
+    return;
+  }
+  res.status(204).end();
+});
+
+router.get('/monitoring/alert-channels', async (_req, res) => {
+  res.json(await listAlertChannels());
+});
+
+router.post('/monitoring/alert-channels', async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const type = body.type;
+  if (!name || (type !== 'webhook' && type !== 'slack' && type !== 'email')) {
+    res.status(400).json({
+      code: 'invalid_body',
+      message: 'name and type (webhook|slack|email) are required',
+    });
+    return;
+  }
+  const channel = await upsertAlertChannel({
+    id: typeof body.id === 'string' ? body.id : undefined,
+    name,
+    type,
+    url: typeof body.url === 'string' ? body.url : undefined,
+    to: typeof body.to === 'string' ? body.to : undefined,
+    enabled: body.enabled !== false,
+  });
+  res.status(201).json(channel);
+});
+
+router.delete('/monitoring/alert-channels/:id', async (req, res) => {
+  const ok = await deleteAlertChannel(req.params.id);
+  if (!ok) {
+    res.status(404).json({ code: 'not_found', message: 'Channel not found' });
+    return;
+  }
+  res.status(204).end();
+});
+
+router.post('/monitoring/alert-config/sync', async (_req, res) => {
+  const result = await syncAlertConfigToHost();
+  res.json(result);
+});
+
 router.get('/monitoring/metrics/:infra', async (req, res) => {
   const range =
     typeof req.query.range === 'string' && req.query.range.trim()
@@ -911,14 +999,6 @@ router.get('/monitoring/metrics/:infra', async (req, res) => {
     return;
   }
   res.json(series);
-});
-
-router.post('/monitoring/alerts', (_req, res) => {
-  res.status(501).json({
-    code: 'not_implemented',
-    message:
-      'Custom alert rules are not enabled; alerts are derived from metrics health or inventory status',
-  });
 });
 
 /** Preview Alloy collector config for a unit (does not write files). */

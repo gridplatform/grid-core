@@ -36,6 +36,8 @@ require GRID_GITOPS_REPO_URL
 require GRID_MODULE_BANK
 require GRID_MODULE_BANK_REF
 require GRID_TF_BACKEND
+require GRID_PROMETHEUS_URL
+require GRID_ALERTMANAGER_URL
 
 pw="${GRID_AUTH_ADMIN_PASSWORD:-}"
 if [[ "$pw" =~ ^(change-me|changeme|password|admin|change-me-before-production)$ ]]; then

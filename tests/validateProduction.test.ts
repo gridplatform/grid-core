@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  collectMonitoringFindings,
   isGitRemoteBank,
   isReleaseModuleBankRef,
   resolveTfBackendMode,
@@ -70,5 +71,24 @@ describe('validateProduction helpers', () => {
   it('validates release refs', () => {
     expect(isReleaseModuleBankRef('v0.1.0')).toBe(true);
     expect(isReleaseModuleBankRef('main')).toBe(false);
+  });
+
+  it('requires prometheus + alertmanager URLs', () => {
+    const savedProm = process.env.GRID_PROMETHEUS_URL;
+    const savedAm = process.env.GRID_ALERTMANAGER_URL;
+    delete process.env.GRID_PROMETHEUS_URL;
+    delete process.env.GRID_ALERTMANAGER_URL;
+    const missing = collectMonitoringFindings();
+    expect(missing.some((f) => f.key === 'GRID_PROMETHEUS_URL')).toBe(true);
+    expect(missing.some((f) => f.key === 'GRID_ALERTMANAGER_URL')).toBe(true);
+
+    process.env.GRID_PROMETHEUS_URL = 'http://127.0.0.1:9090';
+    process.env.GRID_ALERTMANAGER_URL = 'http://127.0.0.1:9093';
+    expect(collectMonitoringFindings()).toEqual([]);
+
+    if (savedProm === undefined) delete process.env.GRID_PROMETHEUS_URL;
+    else process.env.GRID_PROMETHEUS_URL = savedProm;
+    if (savedAm === undefined) delete process.env.GRID_ALERTMANAGER_URL;
+    else process.env.GRID_ALERTMANAGER_URL = savedAm;
   });
 });

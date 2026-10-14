@@ -284,6 +284,28 @@ function collectGitopsFindings(): Finding[] {
   ];
 }
 
+/** Require Prometheus + Alertmanager URLs in production env. */
+export function collectMonitoringFindings(): Finding[] {
+  const out: Finding[] = [];
+  if (!process.env.GRID_PROMETHEUS_URL?.trim()) {
+    out.push({
+      key: 'GRID_PROMETHEUS_URL',
+      found: '(not set)',
+      expect: 'http://127.0.0.1:9090 (local) or http://host.docker.internal:9090 (Compose)',
+      fix: 'GRID_PROMETHEUS_URL=http://127.0.0.1:9090',
+    });
+  }
+  if (!process.env.GRID_ALERTMANAGER_URL?.trim()) {
+    out.push({
+      key: 'GRID_ALERTMANAGER_URL',
+      found: '(not set)',
+      expect: 'http://127.0.0.1:9093 (local) or http://host.docker.internal:9093 (Compose)',
+      fix: 'GRID_ALERTMANAGER_URL=http://127.0.0.1:9093',
+    });
+  }
+  return out;
+}
+
 function formatFindings(findings: Finding[]): string {
   return findings
     .map((f) => {
@@ -332,6 +354,7 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
   findings.push(...collectTfFindings());
   findings.push(...collectModuleBankFindings(opts.moduleBankVersion));
   findings.push(...collectGitopsFindings());
+  findings.push(...collectMonitoringFindings());
 
   if (findings.length === 0) {
     const mode = resolveTfBackendMode();
@@ -340,7 +363,9 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
         (process.env.GRID_TF_STATE_BUCKET
           ? ` bucket=${process.env.GRID_TF_STATE_BUCKET}`
           : '') +
-        ` module-bank-ref=${opts.moduleBankVersion || process.env.GRID_MODULE_BANK_REF}`
+        ` module-bank-ref=${opts.moduleBankVersion || process.env.GRID_MODULE_BANK_REF}` +
+        ` prometheus=${display(process.env.GRID_PROMETHEUS_URL)}` +
+        ` alertmanager=${display(process.env.GRID_ALERTMANAGER_URL)}`
     );
     return;
   }
@@ -361,6 +386,8 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       `  module ref:   ${refFound}   ← must be a released tag (example: v0.1.0)\n` +
       `  tf backend:   ${display(process.env.GRID_TF_BACKEND, '(unset → local)')}\n` +
       `  gitops repo:  ${display(process.env.GRID_GITOPS_REPO_URL)}\n` +
+      `  prometheus:   ${display(process.env.GRID_PROMETHEUS_URL)}\n` +
+      `  alertmanager: ${display(process.env.GRID_ALERTMANAGER_URL)}\n` +
       `\n` +
       `Issues:\n` +
       formatFindings(findings) +
@@ -375,8 +402,11 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       `  GRID_TF_STATE_REGION=us-east-1\n` +
       `  GRID_AUTH_ADMIN_EMAIL=admin@example.com\n` +
       `  GRID_AUTH_ADMIN_PASSWORD=<real-password>\n` +
+      `  GRID_PROMETHEUS_URL=http://127.0.0.1:9090\n` +
+      `  GRID_ALERTMANAGER_URL=http://127.0.0.1:9093\n` +
+      `  GRID_MONITORING_CONFIG_DIR=./install/monitoring\n` +
       `\n` +
-      `Laptop / local paths: use  npm run dev  with .env.development (not npm run prod).\n` +
+      `Dev: npm run dev + .env.development. Monitoring: install/monitoring/README.md\n` +
       `Docs: grid-docs docs/install/remote-state.md · docs/install/dev-vs-prod.md`
   );
 }

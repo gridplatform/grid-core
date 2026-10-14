@@ -1,81 +1,65 @@
-# Monitoring on the Grid VM — systemd only
+# Monitoring (host)
 
-Grid is a **client** for deploy/ops. Monitoring is an **underlying open-source
-plane** on the VM. Same exit idea as Terraform remote state and generated
-configs: remove Grid → you keep Prometheus/Alloy (and TF/state/K8s artifacts).
-You only lose Grid’s console/API/workflows.
+Prometheus (metrics + rules), Alertmanager (notify), optional Alloy (collector).  
+Runs on the **host** (systemd or local binaries) — not in Grid Compose.
 
-| Piece | How it runs | What it is |
-|-------|-------------|------------|
-| **Grid** (core + UI) | Docker Compose **or** `npm run prod` locally | Client / control plane |
-| **Monitoring** (Prometheus + Alloy) | **systemd only** | Durable metrics plane |
+| Component | Port | Operate |
+|-----------|------|---------|
+| Prometheus | `:9090` | Store/query metrics; evaluate alert rules |
+| Alertmanager | `:9093` | Route/notify firings |
+| Alloy | — | Scrapes → `remote_write` to Prometheus |
 
-**Never** install Prometheus/Alloy with Docker Compose. No monitoring containers.
+**Alerts UI:** list firings from Alertmanager. **Settings:** write `rules/` + `alertmanager.yml` under `GRID_MONITORING_CONFIG_DIR`, then `POST /-/reload`.
 
-**Intended:** tear down / remove **Grid** → **monitoring stays**.  
-Not a normal step: tearing down monitoring while Grid is still the ops client.
+## Local (`npm run prod`)
 
-## 1) Local production-style test (`npm run prod`)
-
-### Linux (matches production VM)
+From **grid-core** root. Set in `.env`:
 
 ```bash
-sudo bash install/monitoring/install-systemd.sh   # Prometheus + Alloy once
-# grid-core/.env
 GRID_PROMETHEUS_URL=http://127.0.0.1:9090
-cd grid-core && npm run prod
+GRID_ALERTMANAGER_URL=http://127.0.0.1:9093
+GRID_MONITORING_CONFIG_DIR=./install/monitoring
 ```
 
-### macOS (no systemd — host binaries, same ports)
-
-All commands below assume the **grid-core repository root** as the working
-directory (`install/monitoring/...` is relative to that root).
-
 ```bash
-# Terminal A — Prometheus
-brew install prometheus
+# Prometheus — --web.enable-lifecycle required for Settings reload
 prometheus --config.file=install/monitoring/prometheus.yml \
   --storage.tsdb.path=/tmp/prometheus-data \
   --web.listen-address=127.0.0.1:9090 \
-  --web.enable-remote-write-receiver
+  --web.enable-remote-write-receiver \
+  --web.enable-lifecycle
 
-# Terminal B — Alloy (host metrics → local Prometheus)
-brew install grafana/grafana/alloy
+# Alertmanager
+alertmanager --config.file=install/monitoring/alertmanager.yml \
+  --storage.path=/tmp/alertmanager-data \
+  --web.listen-address=127.0.0.1:9093
+
+# Optional Alloy
 export GRID_PROM_REMOTE_WRITE_URL=http://127.0.0.1:9090/api/v1/write
-alloy run install/monitoring/alloy-host.alloy \
-  --storage.path=/tmp/alloy-data
+alloy run install/monitoring/alloy-host.alloy --storage.path=/tmp/alloy-data
 
-# Terminal C — Grid (same host; set in .env first)
-# GRID_PROMETHEUS_URL=http://127.0.0.1:9090
 npm run prod
 ```
 
-Prometheus + Alloy are on the host; Grid is on the host. Same loopback.
-Stopping Grid does not stop them.
+Linux VM-style local install: `sudo bash install/monitoring/install-systemd.sh` then the same `.env` URLs.
 
-## 2) Production VM (customer deploy)
+## Production VM
 
 ```bash
-# A — monitoring (systemd)
 sudo bash install/monitoring/install-systemd.sh
+systemctl status prometheus alertmanager alloy
 
-# B — Grid application (Compose) — separate lifecycle
-cp install/.env.example install/.env
-# GRID_PROMETHEUS_URL=http://host.docker.internal:9090
-#   ↑ only means: Grid *container* talks to host Prometheus. Prometheus is not in Docker.
+# install/.env (Grid Compose → host)
+GRID_PROMETHEUS_URL=http://host.docker.internal:9090
+GRID_ALERTMANAGER_URL=http://host.docker.internal:9093
+GRID_MONITORING_CONFIG_DIR=/etc/prometheus
+GRID_MONITORING_HOST_DIR=/etc/prometheus
+
 bash install/compose-up.sh
 ```
 
-`host.docker.internal` is a **network path from the Grid container to the VM**.
-It does **not** mean monitoring runs in Docker.
+## Collectors on managed infra
 
-## Units
-
-| Unit | Role |
-|------|------|
-| `prometheus.service` | Store + query + remote_write |
-| `alloy.service` | Collector on this VM (optional host metrics) |
-
-Managed infra: `POST /api/v1/monitoring/setup/:id` → Alloy configs; remote_write to this VM `:9090`.
+`POST /api/v1/monitoring/setup/:id` writes Alloy config; remote_write to this host `:9090`.
 
 See [docs/MONITORING.md](../../docs/MONITORING.md).

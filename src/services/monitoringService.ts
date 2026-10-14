@@ -178,38 +178,21 @@ export interface MonitoringAlert {
   resource: string;
   resourceId: string;
   severity: 'critical' | 'warning' | 'info';
-  status: 'firing' | 'acknowledged' | 'resolved';
+  status: 'firing' | 'suppressed' | 'resolved';
   message: string;
   startedAt: string;
 }
 
-/** Alerts from metrics health when configured; otherwise inventory status. */
+/** Alerts page data — firings from Alertmanager. */
 export async function listInventoryAlerts(): Promise<MonitoringAlert[]> {
-  const items = await listInfrastructures();
-  const upByUnitId = await loadUpMap();
-  const alerts: MonitoringAlert[] = [];
-
-  for (const infra of items) {
-    if (infra.status === 'destroyed') continue;
-    const resolved = resolveUnitHealth(infra, upByUnitId);
-    if (resolved.status === 'healthy' || resolved.status === 'unknown') continue;
-
-    alerts.push({
-      id: `mon-${infra.id}-${resolved.source}-${resolved.status}`,
-      ruleName:
-        resolved.status === 'critical'
-          ? 'infrastructure-critical'
-          : 'infrastructure-warning',
-      resource: infra.name,
-      resourceId: infra.id,
-      severity: resolved.status === 'critical' ? 'critical' : 'warning',
-      status: 'firing',
-      message: resolved.message,
-      startedAt: infra.updatedAt,
-    });
+  const { listAlertmanagerFirings } = await import('./monitoring/alertConfigService');
+  try {
+    return await listAlertmanagerFirings();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[alerts] Alertmanager query failed: ${msg}`);
+    return [];
   }
-
-  return alerts.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 export interface MetricPoint {

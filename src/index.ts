@@ -24,6 +24,7 @@ import {
   assertTfBackendConfigOrThrow,
 } from './validateProduction';
 import { assertArchiveMirrorReady } from './services/archiveMirror';
+import { assertMonitoringPlaneReady } from './services/monitoring/assertMonitoringPlane';
 
 installConsoleTimestamps();
 
@@ -50,8 +51,8 @@ async function main() {
       envFileLoaded: didLoadEnvFile(),
       moduleBankVersion: mbSettings.version,
     });
-    // Hard gate: same state bucket must accept archive/ put+delete (exit buffer).
     await assertArchiveMirrorReady();
+    await assertMonitoringPlaneReady();
   }
 
   try {
@@ -92,6 +93,10 @@ async function main() {
     } else {
       console.log('Metrics API:   (unset — Monitoring uses inventory status)');
     }
+    if (config.alertmanager.url) {
+      console.log(`Alertmanager:  ${config.alertmanager.url}`);
+    }
+    console.log(`Monitoring cfg: ${config.monitoringConfigDir}`);
     if (config.configRootIsDemoFixture) {
       console.warn(
         '[grid-core] GRID_CONFIG_ROOT is the demo-infra test fixture — not a customer config. ' +

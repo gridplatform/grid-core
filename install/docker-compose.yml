@@ -38,17 +38,17 @@ services:
       GRID_TF_AZURE_RESOURCE_GROUP: ${GRID_TF_AZURE_RESOURCE_GROUP:-}
       GRID_TF_AZURE_STORAGE_ACCOUNT: ${GRID_TF_AZURE_STORAGE_ACCOUNT:-}
       GRID_TF_AZURE_CONTAINER: ${GRID_TF_AZURE_CONTAINER:-}
-      # Monitoring is systemd on the VM (never Compose). This URL is only how the
-      # Grid *container* reaches host Prometheus — Prometheus itself is not in Docker.
-      #   sudo bash install/monitoring/install-systemd.sh
+      # Host monitoring APIs + config dir (Settings writes rules here)
       GRID_PROMETHEUS_URL: ${GRID_PROMETHEUS_URL:-http://host.docker.internal:9090}
+      GRID_ALERTMANAGER_URL: ${GRID_ALERTMANAGER_URL:-http://host.docker.internal:9093}
+      GRID_MONITORING_CONFIG_DIR: ${GRID_MONITORING_CONFIG_DIR:-/etc/prometheus}
     extra_hosts:
-      # Grid core container → host systemd Prometheus (:9090). Not a monitoring container.
       - "host.docker.internal:host-gateway"
     volumes:
       - grid-data:/var/lib/grid/data
       - grid-workspaces:/var/lib/grid/workspaces
       - grid-desired-state:/var/lib/grid/desired-state
+      - ${GRID_MONITORING_HOST_DIR:-/etc/prometheus}:/etc/prometheus
     restart: unless-stopped
     healthcheck:
       test:

@@ -1,7 +1,5 @@
-// Optional Alloy on the Grid VM itself (host metrics → local Prometheus).
-// Managed infrastructure units should use API-generated collector.alloy files instead.
-//
-// Env (optional): GRID_PROM_REMOTE_WRITE_URL — defaults to local Prometheus.
+// Host Alloy — scrapes this machine → remote_write to Prometheus.
+// GRID_PROM_REMOTE_WRITE_URL (default http://127.0.0.1:9090/api/v1/write)
 
 prometheus.exporter.unix "node" { }
 

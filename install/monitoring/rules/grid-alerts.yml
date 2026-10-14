@@ -1,0 +1,6 @@
+# Alert rules — written by Grid Alerts → Settings.
+# Empty until rules exist in the UI.
+
+groups:
+  - name: grid
+    rules: []

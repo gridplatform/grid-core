@@ -1,10 +1,17 @@
-# Standalone metrics store for Grid Monitoring.
-# Not part of the Grid control-plane Compose project — survives `docker compose down` on Grid.
-#
-# Scrapes are optional here; fleet agents (Alloy) typically remote_write into this Prometheus.
+# Prometheus — metrics store + alert rule evaluation.
+# Operate: host binary/systemd. Grid Settings updates rules/ and POSTs /-/reload.
+# remote_write from Alloy; Alertmanager at 127.0.0.1:9093.
 
 global:
   scrape_interval: 30s
   evaluation_interval: 30s
+
+rule_files:
+  - rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['127.0.0.1:9093']
 
 scrape_configs: []
