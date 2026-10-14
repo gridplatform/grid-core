@@ -1,68 +1,62 @@
 # Grid Core
 
-HTTP API for Grid Console — **the heart of the platform**. Accepts deploy
-requests, maps them to Grid JSON, runs the CLI add-on (`generate`) + Terraform,
-and streams status/logs.
+Runs Grid on your machine: the HTTP API behind the console, GitOps sync for desired-state JSON, releases with live logs, and the install packaging (Docker Compose / `install.sh`).
 
-**Self-host:** see [`install/`](./install/) and
-[grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install).
+When you click plan or apply in the UI, core calls **[grid-cli](https://github.com/gridplatform/grid-cli)** to turn JSON into Terraform, then runs Terraform itself.
+
+**Self-host:** [`install/`](./install/) · [grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install)
+
+## Quick start (Compose)
 
 ```bash
-# Docker Compose (default on VMs too)
-cp install/.env.example install/.env   # set GRID_AUTH_ADMIN_PASSWORD
+cp install/.env.example install/.env   # set GRID_AUTH_ADMIN_PASSWORD + GRID_TF_*
 docker compose -f install/docker-compose.yml --env-file install/.env up -d --build
 bash install/verify.sh
-
-# Or Ubuntu VM one-liner (Compose)
-# curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
 ```
 
-## Run (development)
+Ubuntu one-liner:
 
 ```bash
-cd grid-core
+export GRID_AUTH_ADMIN_PASSWORD='choose-a-strong-password'
+curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
+```
+
+Create **[remote Terraform state](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md)** before real applies. Prefer an instance role / service account on the host over long-lived cloud keys.
+
+## Development
+
+```bash
 cp -n .env.example .env
 npm install
 npm run dev
 ```
 
-Listens on `http://localhost:3000` (`PORT`).
+API default: `http://localhost:3000`.
 
-## Paths Core owns (injected into CLI)
+## Important environment
 
-| Variable | Purpose | Local default |
-|----------|---------|----------------|
-| `GRID_CONFIG_ROOT` | Desired-state working tree (GitOps checkout) | `./data/desired-state` when `GRID_GITOPS_REPO_URL` is set; else `../demo-infra` |
-| `GRID_MODULE_BANK` | `grid-terraform` — **git URL or local path** | `../grid-terraform` |
-| `GRID_MODULE_BANK_REF` | Branch/tag when bank is a git URL | `main` |
-| `GRID_GITOPS_REPO_URL` | Remote desired-state repo | _(unset)_ |
-| `GRID_CLI_ROOT` | CLI package (add-on) | `../grid-cli` |
-| `GRID_WORK_DIR` | Terraform workspaces | `./workspaces` |
-| `GRID_DATA_DIR` | JSON store | `./data` |
-| `GRID_TERRAFORM_BIN` | `terraform` binary | `terraform` |
+| Variable | Purpose |
+|----------|---------|
+| `GRID_GITOPS_REPO_URL` | **Your** desired-state GitHub repository (not a fork of the public example) |
+| `GRID_CONFIG_ROOT` | Working tree for that JSON (GitOps checkout or local path) |
+| `GRID_MODULE_BANK` | [grid-terraform](https://github.com/gridplatform/grid-terraform) — git URL or local path |
+| `GRID_MODULE_BANK_REF` | Tag/branch when the bank is a git URL (prefer a release tag in production) |
+| `GRID_CLI_ROOT` | Path to grid-cli |
+| `GRID_TF_BACKEND` / `GRID_TF_STATE_*` | Remote state (required for production) |
 
-**`demo-infra` is a test fixture only** — not the final customer configuration.
-Normal installs: `grid init` → set `GRID_CONFIG_ROOT` to that directory.
+[grid-config](https://github.com/gridplatform/grid-config) is a **sample** layout only. For real use, create your own repository and point `GRID_GITOPS_REPO_URL` at it.
 
-## Normal install (not demo)
+Full env list: [grid-docs → Configuration](https://github.com/gridplatform/grid-docs/blob/main/docs/install/configuration.md) · [`install/.env.example`](./install/.env.example)
 
-```bash
-mkdir my-infra && cd my-infra
-git init
-grid init --git --sample          # from grid-cli (npm run grid -- init …)
+## Related repositories
 
-export GRID_CONFIG_ROOT=$PWD      # point grid-core at THIS repo
-# start grid-core with that env
+| Repository | What it’s for |
+|------------|---------------|
+| [grid-ui](https://github.com/gridplatform/grid-ui) | Browser console |
+| [grid-cli](https://github.com/gridplatform/grid-cli) | Command-line tool (also used by this API) |
+| [grid-terraform](https://github.com/gridplatform/grid-terraform) | Terraform modules |
+| [grid-docs](https://github.com/gridplatform/grid-docs) | Guides |
 
-grid generate -c aws/development/vpc/example-vpc.json --config-dir "$GRID_CONFIG_ROOT"
-```
+## License
 
-`POST /api/v1/deployments` with `{ name, engine, provider, environment, resourceType, config }`.
-
-Terraform engine maps the request to Grid JSON and runs `grid-cli generate` +
-Terraform apply against the **module bank from Core env**. Follow with
-`GET /api/v1/deployments/:id` and `.../logs`.
-
-**Access model:** console feature flags only hide types in the UI. The API and
-CLI do not read those flags — a correct request or Grid JSON still runs if the
-module bank and credentials are ready.
+MIT — see [LICENSE](LICENSE).
