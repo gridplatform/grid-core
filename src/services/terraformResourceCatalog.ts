@@ -22,11 +22,10 @@ export type TerraformFamily =
 /** Resource types accepted on deploy requests. */
 export const TERRAFORM_RESOURCE_TYPES: Record<TerraformFamily, string[]> = {
   compute: [
-    'vm',
     'ec2-instance',
     'compute-engine-instance',
     'virtual-machine',
-    'single-vm',
+    'compute-instance',
     'autoscaling',
     'instance-group',
     'gpu-instance',
@@ -37,7 +36,6 @@ export const TERRAFORM_RESOURCE_TYPES: Record<TerraformFamily, string[]> = {
     'subnet',
     'security-group',
     'network-security-group',
-    'nsg',
     'alb',
     'nlb',
     'load-balancer',

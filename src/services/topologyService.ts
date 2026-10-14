@@ -29,17 +29,26 @@ export function buildTopologyFromInfrastructures(
         id: `${infra.id}-${r.name}`,
         name: r.name,
         type:
-          r.type === 'vm'
-            ? providerType === 'AWS'
-              ? 'ec2-instance'
-              : 'gce-instance'
-            : r.type === 'vpc'
+          r.type === 'ec2-instance' || r.type === 'compute-engine-instance' || r.type === 'virtual-machine' || r.type === 'compute-instance'
+            ? r.type === 'compute-engine-instance'
+              ? 'gce-instance'
+              : r.type === 'ec2-instance' || providerType === 'AWS'
+                ? 'ec2-instance'
+                : r.type
+            : r.type === 'vpc' || r.type === 'network'
               ? 'internet-gateway'
               : r.type === 'subnet'
                 ? 'nat-gateway'
                 : r.type,
         layer:
-          r.type === 'vm' ? 'application' : r.type === 'vpc' || r.type === 'subnet' ? 'network' : 'application',
+          r.type === 'ec2-instance' ||
+          r.type === 'compute-engine-instance' ||
+          r.type === 'virtual-machine' ||
+          r.type === 'compute-instance'
+            ? 'application'
+            : r.type === 'vpc' || r.type === 'network' || r.type === 'subnet'
+              ? 'network'
+              : 'application',
         status: healthFromResourceStatus(infra.status),
         connections: [] as string[],
         meta: r.cidr ? { cidr: r.cidr } : undefined,

@@ -40,13 +40,13 @@ export function inferCollectorProfile(resourceType: string): CollectorProfile {
     /kubernetes|k8s|node-pool|node-group|karpenter|machine-pool|openshift|rosa|roks/.test(
       t
     ) ||
-    /^(eks|gke|aks|oke|ack|tke|cce|roks|rosa)(-|$)/.test(t)
+    /^(eks|gke|aks|oke|ack|tke|cce|roks|rosa|kubernetes-engine)(-|$)/.test(t)
   ) {
     return 'kubernetes';
   }
   if (
-    /^(vm|ec2|instance|host|bare-metal|gpu-instance|single-vm)/.test(t) ||
-    /virtual-machine|compute-engine|lightsail/.test(t)
+    /^(vm|ec2|instance|host|bare-metal|gpu-instance|single-vm|compute-instance)/.test(t) ||
+    /virtual-machine|compute-engine|ec2-instance|lightsail/.test(t)
   ) {
     return 'host';
   }
