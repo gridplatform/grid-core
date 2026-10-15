@@ -102,7 +102,11 @@ router.get('/gitops/status', async (req, res) => {
       gitContentHash: i.gitContentHash,
       lastAppliedHash: i.lastAppliedHash,
       status: i.status,
-      desiredAhead: !!(i.gitContentHash && i.gitContentHash !== i.lastAppliedHash),
+      // Stale/destroyed = removed from desired-state (or gone) — not “config ahead of apply”.
+      desiredAhead:
+        i.status !== 'stale' &&
+        i.status !== 'destroyed' &&
+        !!(i.gitContentHash && i.gitContentHash !== i.lastAppliedHash),
     })),
   });
 });
