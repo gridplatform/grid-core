@@ -1,3 +1,4 @@
+import path from 'path';
 import { Router } from 'express';
 import { z } from 'zod';
 import {
@@ -17,6 +18,7 @@ import {
   saveModuleBankSettings,
   syncModuleBank,
 } from '../services/moduleBankService';
+import { resolveResourceType } from '../services/resourceType';
 import type { GitOpsSettings } from '../types/gitops';
 import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
 import { recordAudit } from '../services/auditStore';
@@ -32,10 +34,39 @@ const router = Router();
 const SettingsSchema = z.object({
   repoUrl: z.string().min(1),
   branch: z.string().min(1).default('main'),
-  pathPrefix: z.string().default(''),
+  pathPrefix: z
+    .string()
+    .default('')
+    .refine(
+      (p) => !p || (!path.isAbsolute(p) && !p.split(/[/\\]/).includes('..')),
+      { message: 'pathPrefix must be a relative path without .. segments' }
+    ),
   syncIntervalSec: z.number().int().min(0).default(0),
   enabled: z.boolean().default(true),
 });
+
+/** Strip embedded credentials from git remotes before returning to clients. */
+function redactRepoUrl(url: string | undefined): string | undefined {
+  if (!url) return url;
+  try {
+    if (/^https?:\/\//i.test(url)) {
+      const u = new URL(url);
+      if (u.username || u.password) {
+        u.username = u.username ? '***' : '';
+        u.password = u.password ? '***' : '';
+        return u.toString();
+      }
+    }
+    // git@host:path — no embedded password typical; leave as-is
+    return url.replace(
+      /^(https?:\/\/)([^/@]+)(:[^/@]*)?@/i,
+      (_, proto: string, user: string, pass?: string) =>
+        `${proto}${user ? '***' : ''}${pass ? ':***' : ''}@`
+    );
+  } catch {
+    return url.replace(/\/\/([^/@]+)(:[^/@]*)?@/, '//***:***@');
+  }
+}
 
 router.get('/gitops/status', async (req, res) => {
   const status = await loadGitOpsRuntime();
@@ -43,12 +74,29 @@ router.get('/gitops/status', async (req, res) => {
   const items = await listInfrastructures();
   const scoped = access ? filterInfrastructuresByAccess(access, items) : items;
   const gitTracked = scoped.filter((i) => !!i.gitPath);
+  const settings = status.settings
+    ? {
+        ...status.settings,
+        repoUrl: redactRepoUrl(status.settings.repoUrl) || status.settings.repoUrl,
+      }
+    : status.settings;
   res.json({
     ...status,
+    settings,
+    // Do not expose host filesystem layout to every caller.
+    clonePath: undefined,
     trackedCount: gitTracked.length,
     infrastructures: gitTracked.map((i) => ({
       id: i.id,
       name: i.name,
+      provider: i.provider,
+      type: resolveResourceType({
+        configJson: i.configJson,
+        gitPath: i.gitPath,
+        name: i.name,
+      }),
+      project: i.project,
+      environment: i.environment,
       gitPath: i.gitPath,
       gitCommit: i.gitCommit,
       gitContentHash: i.gitContentHash,
@@ -59,8 +107,13 @@ router.get('/gitops/status', async (req, res) => {
   });
 });
 
-router.get('/gitops/settings', async (_req, res) => {
-  res.json((await loadGitOpsSettings()) || null);
+router.get('/gitops/settings', requireRole('admin'), async (_req, res) => {
+  const settings = await loadGitOpsSettings();
+  if (!settings) {
+    res.json(null);
+    return;
+  }
+  res.json({ ...settings, repoUrl: redactRepoUrl(settings.repoUrl) || settings.repoUrl });
 });
 
 router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
@@ -70,8 +123,26 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
     return;
   }
   const body = parsed.data;
+  const existing = await loadGitOpsSettings();
+  let repoUrl = body.repoUrl;
+  // UI may round-trip a redacted URL — preserve stored credentials when unchanged.
+  if (repoUrl.includes('***')) {
+    const redactedExisting = existing?.repoUrl
+      ? redactRepoUrl(existing.repoUrl)
+      : undefined;
+    if (existing?.repoUrl && redactedExisting === repoUrl) {
+      repoUrl = existing.repoUrl;
+    } else {
+      res.status(400).json({
+        code: 'validation_error',
+        message:
+          'Re-enter the full repository URL (including credentials) to change it. Redacted placeholders cannot be saved.',
+      });
+      return;
+    }
+  }
   const settings: GitOpsSettings = {
-    repoUrl: body.repoUrl,
+    repoUrl,
     branch: body.branch,
     pathPrefix: body.pathPrefix,
     syncIntervalSec: body.syncIntervalSec,
@@ -83,7 +154,7 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
     action: 'gitops.settings.update',
     actor: getActorEmail(req),
     actorRole: getActorRole(req),
-    summary: `Updated GitOps settings (${settings.repoUrl} @ ${settings.branch})`,
+    summary: `Updated GitOps settings (${redactRepoUrl(settings.repoUrl) || settings.repoUrl} @ ${settings.branch})`,
     resourceType: 'gitops',
     details: {
       branch: settings.branch,
@@ -92,7 +163,7 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
       enabled: settings.enabled,
     },
   });
-  res.json(settings);
+  res.json({ ...settings, repoUrl: redactRepoUrl(settings.repoUrl) || settings.repoUrl });
 });
 
 router.post('/gitops/sync', requireRole('admin'), async (req, res) => {

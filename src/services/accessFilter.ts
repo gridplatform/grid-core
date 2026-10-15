@@ -2,18 +2,23 @@ import type { Request } from 'express';
 import type { Infrastructure } from '../types/api';
 import { AccessError } from '../lib/httpError';
 import {
+  assertDomainAccess,
   canAccessEnvironment,
   canAccessProject,
   canAccessWorkspacePair,
   resolveAccessForUser,
+  type AccessContext,
   type EffectiveAccess,
 } from './accessService';
 
-/** Resolve access for the authenticated request (no project context). */
-export async function accessForRequest(req: Request): Promise<EffectiveAccess | null> {
+/** Resolve access for the authenticated request (optional project×env context). */
+export async function accessForRequest(
+  req: Request,
+  ctx?: AccessContext
+): Promise<EffectiveAccess | null> {
   const user = req.gridUser;
   if (!user) return null;
-  return resolveAccessForUser(user);
+  return resolveAccessForUser(user, ctx);
 }
 
 /** Throw 403 if the unit is outside the caller's workspace grants. */
@@ -21,7 +26,8 @@ export async function assertInfrastructureAccess(
   req: Request,
   infra: Pick<Infrastructure, 'id' | 'name' | 'project' | 'environment'>
 ): Promise<EffectiveAccess | null> {
-  const access = await accessForRequest(req);
+  const ctx = { project: infra.project, environment: infra.environment };
+  const access = await accessForRequest(req, ctx);
   if (!access) return null;
   if (!canAccessWorkspacePair(access.workspace, infra.project, infra.environment)) {
     throw new AccessError(`No access to infrastructure “${infra.name}”`, {
@@ -30,6 +36,39 @@ export async function assertInfrastructureAccess(
       environment: infra.environment,
     });
   }
+  return access;
+}
+
+/**
+ * Workspace visibility + infrastructure write for mutate / deploy paths.
+ * Call on create, patch, clone, and deployment entrypoints.
+ */
+export async function assertInfrastructureWrite(
+  req: Request,
+  infra: Pick<Infrastructure, 'id' | 'name' | 'project' | 'environment'>,
+  actionLabel = 'modify infrastructure'
+): Promise<EffectiveAccess | null> {
+  const access = await assertInfrastructureAccess(req, infra);
+  if (!access) return null;
+  assertDomainAccess(
+    access,
+    'infrastructure',
+    'write',
+    actionLabel,
+    { project: infra.project, environment: infra.environment }
+  );
+  return access;
+}
+
+/** Workspace + write for a project×environment before creating a new unit. */
+export async function assertInfrastructureCreate(
+  req: Request,
+  ctx: { project?: string; environment: string },
+  actionLabel = 'create infrastructure'
+): Promise<EffectiveAccess | null> {
+  const access = await accessForRequest(req, ctx);
+  if (!access) return null;
+  assertDomainAccess(access, 'infrastructure', 'write', actionLabel, ctx);
   return access;
 }
 

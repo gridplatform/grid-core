@@ -56,6 +56,9 @@ const ALLOWED_GRID_SUBCOMMANDS = new Set([
 export function parseGridCliCommand(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) throw new Error('Custom command is empty');
+  if (/[\r\n\0]/.test(trimmed)) {
+    throw new Error('Custom command cannot contain newlines or null bytes');
+  }
   if (/[;|&`$()<>]/.test(trimmed)) {
     throw new Error('Custom command cannot contain shell metacharacters');
   }

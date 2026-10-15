@@ -49,10 +49,18 @@ async function discoverGridJsonFiles(
   root: string,
   pathPrefix: string
 ): Promise<Array<{ abs: string; gitPath: string }>> {
-  const base =
-    !pathPrefix || pathPrefix === '.' || pathPrefix === './'
-      ? root
-      : path.join(root, pathPrefix);
+  const { resolveUnderRoot } = await import('../lib/safePath');
+  let base: string;
+  try {
+    base =
+      !pathPrefix || pathPrefix === '.' || pathPrefix === './'
+        ? path.resolve(root)
+        : resolveUnderRoot(root, pathPrefix);
+  } catch (err) {
+    throw new Error(
+      `Invalid GitOps pathPrefix: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
   if (!(await fs.pathExists(base))) return [];
 
   const found: Array<{ abs: string; gitPath: string }> = [];

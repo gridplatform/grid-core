@@ -48,6 +48,8 @@ import { getActorEmail, getActorRole, requireRole } from '../middleware/requireA
 import {
   accessForRequest,
   assertInfrastructureAccess,
+  assertInfrastructureCreate,
+  assertInfrastructureWrite,
   filterEnvironmentsByAccess,
   filterInfrastructuresByAccess,
   filterProjectsByAccess,
@@ -229,6 +231,13 @@ router.post('/infrastructures', async (req, res) => {
   }
 
   const body = parsed.data;
+  try {
+    await assertInfrastructureCreate(req, { environment: body.environment });
+  } catch (err) {
+    sendError(res, err);
+    return;
+  }
+
   const provider = body.provider as CloudProviderType;
   const infra = await createInfrastructure({
     name: body.name,
@@ -288,6 +297,18 @@ router.patch('/infrastructures/:id', async (req, res) => {
   const parsed = PatchInfraSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ code: 'validation_error', message: parsed.error.message });
+    return;
+  }
+
+  try {
+    const nextEnv = parsed.data.environment ?? infra.environment;
+    await assertInfrastructureWrite(
+      req,
+      { ...infra, environment: nextEnv },
+      'update infrastructure'
+    );
+  } catch (err) {
+    sendError(res, err);
     return;
   }
 
@@ -385,7 +406,7 @@ router.post('/infrastructures/:id/restore-config', async (req, res) => {
     return;
   }
   try {
-    await assertInfrastructureAccess(req, infra);
+    await assertInfrastructureWrite(req, infra, 'restore infrastructure config');
     const restored = await restoreInfrastructureToConfig(infra);
     await recordAudit({
       action: 'infra.restore_config',
@@ -441,7 +462,7 @@ router.post('/infrastructures/:id/clone', async (req, res) => {
     return;
   }
   try {
-    await assertInfrastructureAccess(req, infra);
+    await assertInfrastructureWrite(req, infra, 'clone infrastructure');
     const clone = await createInfrastructure({
       ...infra,
       name: `${infra.name}-clone`,
@@ -464,10 +485,28 @@ router.get('/audit', requireRole('admin'), async (req, res) => {
   res.json(await listAuditEvents(limit));
 });
 
-router.get('/deployments', async (_req, res) => {
+router.get('/deployments', async (req, res) => {
   void syncInfrastructuresFromConfigRoot();
   await reconcileDeployments();
-  res.json(await listDeployments());
+  const access = await accessForRequest(req);
+  const deployments = await listDeployments();
+  if (!access || access.workspace.mode === 'global') {
+    res.json(deployments);
+    return;
+  }
+  const infras = await listInfrastructures();
+  const byId = new Map(infras.map((i) => [i.id, i]));
+  res.json(
+    deployments.filter((d) => {
+      const infra = byId.get(d.infrastructureId);
+      if (infra) {
+        return canAccessWorkspacePair(access.workspace, infra.project, infra.environment);
+      }
+      return (
+        filterEnvironmentsByAccess(access, [{ slug: d.environment || '' }]).length > 0
+      );
+    })
+  );
 });
 
 router.post('/deployments', async (req, res) => {
@@ -502,36 +541,51 @@ router.post('/deployments', async (req, res) => {
   }
 
   let infra: Infrastructure;
-  if (body.infrastructureId) {
-    const existing = await getInfrastructure(body.infrastructureId);
-    if (!existing) {
-      res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
-      return;
+  try {
+    if (body.infrastructureId) {
+      const existing = await getInfrastructure(body.infrastructureId);
+      if (!existing) {
+        res.status(404).json({ code: 'not_found', message: 'Infrastructure not found' });
+        return;
+      }
+      if (existing.status === 'destroyed' && !existing.gitPath) {
+        res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
+        return;
+      }
+      await assertInfrastructureWrite(
+        req,
+        { ...existing, environment: body.environment },
+        'deploy infrastructure'
+      );
+      existing.name = body.name;
+      existing.environment = body.environment;
+      existing.configJson = mapped.gridConfig;
+      existing.provider = mapped.displayProvider;
+      if (existing.status === 'destroyed') {
+        existing.status = 'pending';
+        existing.lastAppliedHash = undefined;
+      }
+      existing.updatedAt = new Date().toISOString();
+      infra = await saveInfrastructure(existing);
+    } else {
+      await assertInfrastructureCreate(
+        req,
+        { environment: body.environment },
+        'deploy infrastructure'
+      );
+      infra = await createInfrastructure({
+        name: body.name,
+        environment: body.environment,
+        provider: mapped.displayProvider,
+        configJson: mapped.gridConfig,
+        status: 'pending',
+        autoApprove: true,
+        driftDetection: false,
+      });
     }
-    if (existing.status === 'destroyed' && !existing.gitPath) {
-      res.status(409).json({ code: 'destroyed', message: 'Infrastructure was destroyed' });
-      return;
-    }
-    existing.name = body.name;
-    existing.environment = body.environment;
-    existing.configJson = mapped.gridConfig;
-    existing.provider = mapped.displayProvider;
-    if (existing.status === 'destroyed') {
-      existing.status = 'pending';
-      existing.lastAppliedHash = undefined;
-    }
-    existing.updatedAt = new Date().toISOString();
-    infra = await saveInfrastructure(existing);
-  } else {
-    infra = await createInfrastructure({
-      name: body.name,
-      environment: body.environment,
-      provider: mapped.displayProvider,
-      configJson: mapped.gridConfig,
-      status: 'pending',
-      autoApprove: true,
-      driftDetection: false,
-    });
+  } catch (err) {
+    sendError(res, err);
+    return;
   }
 
   const mode: LifecycleMode = body.mode;
@@ -852,9 +906,13 @@ router.post('/releases/:id/cancel', requireRole('admin'), async (req, res) => {
   }
 });
 
-router.get('/approvals', async (_req, res) => {
-  res.json(await listPendingApprovals());
-});
+router.get(
+  '/approvals',
+  requireRole('maintainer', 'admin', 'superadmin'),
+  async (_req, res) => {
+    res.json(await listPendingApprovals());
+  }
+);
 
 router.post(
   '/approvals/:id/approve',

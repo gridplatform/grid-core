@@ -256,7 +256,8 @@ export async function restoreInfrastructureToConfig(
   if (!infra.gitPath) {
     throw new Error('Cannot restore: infrastructure has no config path');
   }
-  const abs = path.join(config.configRoot, infra.gitPath);
+  const { resolveUnderRoot } = await import('../lib/safePath');
+  const abs = resolveUnderRoot(config.configRoot, infra.gitPath);
   await fs.ensureDir(path.dirname(abs));
   await writeJsonAtomic(abs, infra.configJson);
 
