@@ -26,7 +26,13 @@ GRID_CONFIG_ROOT/                 # demo-infra locally, or clone of your GitHub 
 |------|--------------------|--------|
 | Local demo | `../demo-infra` | optional / off — files on disk |
 | Customer local | folder from `grid init` | optional |
-| Remote GitHub | checkout of that repo (same path Core syncs) | Sync pulls into this root |
+| Remote GitHub | checkout of that repo (same path Core syncs) | Sync **resets** the clone to `origin/<branch>` |
+
+When GitOps is on, Core treats the checkout as a **read-only mirror** of GitHub.
+Each sync runs `git fetch` + `git checkout -B <branch> origin/<branch>`, so dirty
+local edits to tracked JSON cannot block sync. Edit intent in GitHub (or push from
+another clone) — do not rely on hand-editing `data/desired-state`. Untracked
+`archive/` under the clone is left alone.
 
 JSON change → regenerate **`archive/` instance HCL** (not the module bank). Same
 whether you run `grid generate` locally or Core plan/apply after Sync.

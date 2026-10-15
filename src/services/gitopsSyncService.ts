@@ -112,15 +112,31 @@ async function ensureClone(settings: GitOpsSettings): Promise<string> {
   if (await fs.pathExists(gitDir)) {
     if (settings.repoUrl) {
       await runGit(['remote', 'set-url', 'origin', settings.repoUrl], root);
-      // Fast-forward only — never hard-reset local desired-state work.
-      const pull = await runGit(
-        ['pull', '--ff-only', 'origin', settings.branch],
-        root
-      );
-      if (pull.code !== 0) {
+      // GitOps clone is a mirror of origin — not a place for local edits.
+      // Dirty trees (manual edits, old scripts, accidental writes) used to make
+      // `pull --ff-only` skip forever. Always discard local tracked changes and
+      // match origin/<branch>. Untracked paths (e.g. generated archive/) are kept.
+      const fetch = await runGit(['fetch', 'origin', settings.branch], root);
+      if (fetch.code !== 0) {
         console.warn(
-          `[gitops] ff-only pull skipped (${pull.stderr || pull.stdout || 'diverged'}). Keeping local tree.`
+          `[gitops] fetch failed (${fetch.stderr || fetch.stdout || 'unknown'}). Keeping local tree.`
         );
+        return root;
+      }
+      const target = `origin/${settings.branch}`;
+      // -B: point local branch at origin tip (hard reset of tracked files).
+      const checkout = await runGit(['checkout', '-B', settings.branch, target], root);
+      if (checkout.code !== 0) {
+        const fallback = await runGit(['reset', '--hard', 'FETCH_HEAD'], root);
+        if (fallback.code !== 0) {
+          console.warn(
+            `[gitops] sync to ${target} failed (${checkout.stderr || checkout.stdout || fallback.stderr || 'unknown'}). Keeping local tree.`
+          );
+        } else {
+          console.log(`[gitops] reset working tree to FETCH_HEAD (${settings.branch})`);
+        }
+      } else {
+        console.log(`[gitops] synced working tree to ${target}`);
       }
     }
     return root;
