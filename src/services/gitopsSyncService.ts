@@ -15,9 +15,14 @@ import {
   saveGitOpsRuntime,
 } from '../store/gitopsStore';
 import { hashContent } from './gitopsHash';
+import {
+  environmentFromMetadata,
+  nameFromConfig,
+} from './configFields';
 import { providerFromConfig } from './providerLabels';
 import { projectSlugFromGitPath } from './projectsService';
 import { ensureUnitIdInConfig } from './unitIdentity';
+import { resolveUnderRoot } from '../lib/safePath';
 
 function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -35,21 +40,14 @@ function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: st
   });
 }
 
-function nameFromConfig(cfg: Record<string, unknown>, fallback: string): string {
-  const meta = cfg.metadata as { name?: string } | undefined;
-  return meta?.name || (typeof cfg.name === 'string' ? cfg.name : fallback);
-}
-
 function environmentFromConfig(cfg: Record<string, unknown>): string {
-  const meta = cfg.metadata as { environment?: string } | undefined;
-  return meta?.environment || (typeof cfg.environment === 'string' ? cfg.environment : 'dev');
+  return environmentFromMetadata(cfg) || 'dev';
 }
 
 async function discoverGridJsonFiles(
   root: string,
   pathPrefix: string
 ): Promise<Array<{ abs: string; gitPath: string }>> {
-  const { resolveUnderRoot } = await import('../lib/safePath');
   let base: string;
   try {
     base =

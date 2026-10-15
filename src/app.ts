@@ -18,8 +18,7 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
-  // Restrict browser origins in production when GRID_CORS_ORIGIN is set
-  // (comma-separated). Local/dev keeps reflect-any for Vite.
+  // Optional allow-list: GRID_CORS_ORIGIN=https://a.com,https://b.com
   const corsOrigin = (process.env.GRID_CORS_ORIGIN || '').trim();
   app.use(
     cors(
@@ -32,7 +31,6 @@ export function createApp() {
     )
   );
   app.use(express.json({ limit: '2mb' }));
-  // Pretty access log with local timestamp (morgan writes stdout — not console).
   app.use(
     morgan(':grid-date :method :url :status :response-time ms - :res[content-length]')
   );

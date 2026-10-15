@@ -39,10 +39,7 @@ export async function assertInfrastructureAccess(
   return access;
 }
 
-/**
- * Workspace visibility + infrastructure write for mutate / deploy paths.
- * Call on create, patch, clone, and deployment entrypoints.
- */
+/** Requires workspace access and infrastructure write on an existing unit. */
 export async function assertInfrastructureWrite(
   req: Request,
   infra: Pick<Infrastructure, 'id' | 'name' | 'project' | 'environment'>,
@@ -60,7 +57,7 @@ export async function assertInfrastructureWrite(
   return access;
 }
 
-/** Workspace + write for a project×environment before creating a new unit. */
+/** Requires infrastructure write for the given project × environment. */
 export async function assertInfrastructureCreate(
   req: Request,
   ctx: { project?: string; environment: string },

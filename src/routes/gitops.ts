@@ -45,7 +45,7 @@ const SettingsSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
-/** Strip embedded credentials from git remotes before returning to clients. */
+/** Returns a repo URL safe for API responses (userinfo redacted). */
 function redactRepoUrl(url: string | undefined): string | undefined {
   if (!url) return url;
   try {
@@ -56,16 +56,51 @@ function redactRepoUrl(url: string | undefined): string | undefined {
         u.password = u.password ? '***' : '';
         return u.toString();
       }
+      return url;
     }
-    // git@host:path — no embedded password typical; leave as-is
-    return url.replace(
-      /^(https?:\/\/)([^/@]+)(:[^/@]*)?@/i,
-      (_, proto: string, user: string, pass?: string) =>
-        `${proto}${user ? '***' : ''}${pass ? ':***' : ''}@`
-    );
+    return url;
   } catch {
     return url.replace(/\/\/([^/@]+)(:[^/@]*)?@/, '//***:***@');
   }
+}
+
+function publicGitOpsSettings(settings: GitOpsSettings): GitOpsSettings {
+  return {
+    ...settings,
+    repoUrl: redactRepoUrl(settings.repoUrl) || settings.repoUrl,
+  };
+}
+
+/** True when desired-state content has not been applied yet. */
+function isDesiredAhead(infra: {
+  status: string;
+  gitContentHash?: string;
+  lastAppliedHash?: string;
+}): boolean {
+  if (infra.status === 'stale' || infra.status === 'destroyed') return false;
+  return !!(
+    infra.gitContentHash &&
+    infra.gitContentHash !== infra.lastAppliedHash
+  );
+}
+
+/** Keep stored credentials when the client posts a redacted URL unchanged. */
+function resolveRepoUrlInput(
+  incoming: string,
+  existing: string | undefined
+): { ok: true; repoUrl: string } | { ok: false; message: string } {
+  if (!incoming.includes('***')) {
+    return { ok: true, repoUrl: incoming };
+  }
+  const redactedExisting = existing ? redactRepoUrl(existing) : undefined;
+  if (existing && redactedExisting === incoming) {
+    return { ok: true, repoUrl: existing };
+  }
+  return {
+    ok: false,
+    message:
+      'Re-enter the full repository URL (including credentials) to change it. Redacted placeholders cannot be saved.',
+  };
 }
 
 router.get('/gitops/status', async (req, res) => {
@@ -74,16 +109,10 @@ router.get('/gitops/status', async (req, res) => {
   const items = await listInfrastructures();
   const scoped = access ? filterInfrastructuresByAccess(access, items) : items;
   const gitTracked = scoped.filter((i) => !!i.gitPath);
-  const settings = status.settings
-    ? {
-        ...status.settings,
-        repoUrl: redactRepoUrl(status.settings.repoUrl) || status.settings.repoUrl,
-      }
-    : status.settings;
+  const settings = status.settings ? publicGitOpsSettings(status.settings) : status.settings;
   res.json({
     ...status,
     settings,
-    // Do not expose host filesystem layout to every caller.
     clonePath: undefined,
     trackedCount: gitTracked.length,
     infrastructures: gitTracked.map((i) => ({
@@ -102,11 +131,7 @@ router.get('/gitops/status', async (req, res) => {
       gitContentHash: i.gitContentHash,
       lastAppliedHash: i.lastAppliedHash,
       status: i.status,
-      // Stale/destroyed = removed from desired-state (or gone) — not “config ahead of apply”.
-      desiredAhead:
-        i.status !== 'stale' &&
-        i.status !== 'destroyed' &&
-        !!(i.gitContentHash && i.gitContentHash !== i.lastAppliedHash),
+      desiredAhead: isDesiredAhead(i),
     })),
   });
 });
@@ -117,7 +142,7 @@ router.get('/gitops/settings', requireRole('admin'), async (_req, res) => {
     res.json(null);
     return;
   }
-  res.json({ ...settings, repoUrl: redactRepoUrl(settings.repoUrl) || settings.repoUrl });
+  res.json(publicGitOpsSettings(settings));
 });
 
 router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
@@ -128,25 +153,13 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
   }
   const body = parsed.data;
   const existing = await loadGitOpsSettings();
-  let repoUrl = body.repoUrl;
-  // UI may round-trip a redacted URL — preserve stored credentials when unchanged.
-  if (repoUrl.includes('***')) {
-    const redactedExisting = existing?.repoUrl
-      ? redactRepoUrl(existing.repoUrl)
-      : undefined;
-    if (existing?.repoUrl && redactedExisting === repoUrl) {
-      repoUrl = existing.repoUrl;
-    } else {
-      res.status(400).json({
-        code: 'validation_error',
-        message:
-          'Re-enter the full repository URL (including credentials) to change it. Redacted placeholders cannot be saved.',
-      });
-      return;
-    }
+  const resolved = resolveRepoUrlInput(body.repoUrl, existing?.repoUrl);
+  if (!resolved.ok) {
+    res.status(400).json({ code: 'validation_error', message: resolved.message });
+    return;
   }
   const settings: GitOpsSettings = {
-    repoUrl,
+    repoUrl: resolved.repoUrl,
     branch: body.branch,
     pathPrefix: body.pathPrefix,
     syncIntervalSec: body.syncIntervalSec,
@@ -158,7 +171,7 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
     action: 'gitops.settings.update',
     actor: getActorEmail(req),
     actorRole: getActorRole(req),
-    summary: `Updated GitOps settings (${redactRepoUrl(settings.repoUrl) || settings.repoUrl} @ ${settings.branch})`,
+    summary: `Updated GitOps settings (${publicGitOpsSettings(settings).repoUrl} @ ${settings.branch})`,
     resourceType: 'gitops',
     details: {
       branch: settings.branch,
@@ -167,7 +180,7 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
       enabled: settings.enabled,
     },
   });
-  res.json({ ...settings, repoUrl: redactRepoUrl(settings.repoUrl) || settings.repoUrl });
+  res.json(publicGitOpsSettings(settings));
 });
 
 router.post('/gitops/sync', requireRole('admin'), async (req, res) => {

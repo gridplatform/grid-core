@@ -11,21 +11,22 @@ import {
   saveInfrastructure,
 } from '../store/memoryStore';
 import { hashContent } from './gitopsHash';
+import {
+  environmentFromMetadata,
+  nameFromConfig,
+} from './configFields';
 import { projectSlugFromGitPath } from './projectsService';
 import { KNOWN_CLOUD_SEGMENTS, providerFromConfig } from './providerLabels';
 import { invalidateConfigDiscoveryCache } from './configDiscovery';
 import { ensureUnitIdInConfig } from './unitIdentity';
+import { resolveUnderRoot } from '../lib/safePath';
 
 const SKIP_DIRS = new Set(['.git', '.grid', 'node_modules', 'scripts', 'archive']);
 
-function nameFromConfig(cfg: Record<string, unknown>, fallback: string): string {
-  const meta = cfg.metadata as { name?: string } | undefined;
-  return meta?.name || (typeof cfg.name === 'string' ? cfg.name : fallback);
-}
-
+/** Prefer metadata, then path heuristics under GRID_CONFIG_ROOT. */
 function environmentFromConfig(cfg: Record<string, unknown>, gitPath: string): string {
-  const meta = cfg.metadata as { environment?: string } | undefined;
-  if (meta?.environment) return meta.environment;
+  const fromMeta = environmentFromMetadata(cfg);
+  if (fromMeta) return fromMeta;
   const parts = gitPath.split('/');
   if (parts[0] === '.ephemeral' && parts[1]?.includes('--')) {
     return parts[1];
@@ -256,7 +257,6 @@ export async function restoreInfrastructureToConfig(
   if (!infra.gitPath) {
     throw new Error('Cannot restore: infrastructure has no config path');
   }
-  const { resolveUnderRoot } = await import('../lib/safePath');
   const abs = resolveUnderRoot(config.configRoot, infra.gitPath);
   await fs.ensureDir(path.dirname(abs));
   await writeJsonAtomic(abs, infra.configJson);
