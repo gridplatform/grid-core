@@ -4,7 +4,8 @@ import { z } from 'zod';
 import {
   loadGitOpsRuntime,
   loadGitOpsSettings,
-  saveGitOpsSettings,
+  normalizeAndSaveGitOpsSettings,
+  publicGitOpsSettings,
 } from '../store/gitopsStore';
 import {
   GitOpsSyncInProgressError,
@@ -20,6 +21,7 @@ import {
 } from '../services/moduleBankService';
 import { resolveResourceType } from '../services/resourceType';
 import type { GitOpsSettings } from '../types/gitops';
+import { redactGitRemoteUrl } from '../lib/gitRemoteAuth';
 import { getActorEmail, getActorRole, requireRole } from '../middleware/requireAuth';
 import { recordAudit } from '../services/auditStore';
 import {
@@ -43,33 +45,20 @@ const SettingsSchema = z.object({
     ),
   syncIntervalSec: z.number().int().min(0).default(0),
   enabled: z.boolean().default(true),
+  /** HTTPS username (optional). Omit to keep; empty string clears override. */
+  username: z.string().optional(),
+  /**
+   * Write-only host-issued PAT / deploy token / app password (Grid does not mint these).
+   * Omit / empty = keep existing; send clearAuth: true to remove.
+   */
+  token: z.string().optional(),
+  /**
+   * When that host token expires (`YYYY-MM-DD`). Required in the console when setting a new token.
+   * Empty string clears; omit keeps existing when not rotating.
+   */
+  tokenExpiresAt: z.string().optional(),
+  clearAuth: z.boolean().optional(),
 });
-
-/** Returns a repo URL safe for API responses (userinfo redacted). */
-function redactRepoUrl(url: string | undefined): string | undefined {
-  if (!url) return url;
-  try {
-    if (/^https?:\/\//i.test(url)) {
-      const u = new URL(url);
-      if (u.username || u.password) {
-        u.username = u.username ? '***' : '';
-        u.password = u.password ? '***' : '';
-        return u.toString();
-      }
-      return url;
-    }
-    return url;
-  } catch {
-    return url.replace(/\/\/([^/@]+)(:[^/@]*)?@/, '//***:***@');
-  }
-}
-
-function publicGitOpsSettings(settings: GitOpsSettings): GitOpsSettings {
-  return {
-    ...settings,
-    repoUrl: redactRepoUrl(settings.repoUrl) || settings.repoUrl,
-  };
-}
 
 /** True when desired-state content has not been applied yet. */
 function isDesiredAhead(infra: {
@@ -84,7 +73,7 @@ function isDesiredAhead(infra: {
   );
 }
 
-/** Keep stored credentials when the client posts a redacted URL unchanged. */
+/** Keep stored URL when the client posts a redacted placeholder unchanged. */
 function resolveRepoUrlInput(
   incoming: string,
   existing: string | undefined
@@ -92,14 +81,14 @@ function resolveRepoUrlInput(
   if (!incoming.includes('***')) {
     return { ok: true, repoUrl: incoming };
   }
-  const redactedExisting = existing ? redactRepoUrl(existing) : undefined;
+  const redactedExisting = existing ? redactGitRemoteUrl(existing) : undefined;
   if (existing && redactedExisting === incoming) {
     return { ok: true, repoUrl: existing };
   }
   return {
     ok: false,
     message:
-      'Re-enter the full repository URL (including credentials) to change it. Redacted placeholders cannot be saved.',
+      'Re-enter the repository URL to change it. Redacted placeholders cannot be saved.',
   };
 }
 
@@ -109,10 +98,8 @@ router.get('/gitops/status', async (req, res) => {
   const items = await listInfrastructures();
   const scoped = access ? filterInfrastructuresByAccess(access, items) : items;
   const gitTracked = scoped.filter((i) => !!i.gitPath);
-  const settings = status.settings ? publicGitOpsSettings(status.settings) : status.settings;
   res.json({
     ...status,
-    settings,
     clonePath: undefined,
     trackedCount: gitTracked.length,
     infrastructures: gitTracked.map((i) => ({
@@ -142,7 +129,7 @@ router.get('/gitops/settings', requireRole('admin'), async (_req, res) => {
     res.json(null);
     return;
   }
-  res.json(publicGitOpsSettings(settings));
+  res.json(await publicGitOpsSettings(settings));
 });
 
 router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
@@ -166,21 +153,69 @@ router.put('/gitops/settings', requireRole('admin'), async (req, res) => {
     enabled: body.enabled,
     updatedAt: new Date().toISOString(),
   };
-  await saveGitOpsSettings(settings);
+
+  let tokenOpt: string | null | undefined = undefined;
+  let usernameOpt: string | null | undefined = undefined;
+  let expiresOpt: string | null | undefined = undefined;
+  if (body.clearAuth) {
+    tokenOpt = null;
+    usernameOpt = null;
+    expiresOpt = null;
+  } else {
+    if (typeof body.token === 'string' && body.token.length > 0) {
+      tokenOpt = body.token;
+      const exp = body.tokenExpiresAt?.trim();
+      if (!exp) {
+        res.status(400).json({
+          code: 'validation_error',
+          message:
+            'tokenExpiresAt (YYYY-MM-DD) is required when setting a new HTTPS token — use the expiry from your Git host.',
+        });
+        return;
+      }
+      expiresOpt = exp;
+      const user =
+        typeof body.username === 'string' ? body.username.trim() : '';
+      if (!user) {
+        res.status(400).json({
+          code: 'validation_error',
+          message:
+            'username is required when setting a new HTTPS token (e.g. git, oauth2, x-token-auth).',
+        });
+        return;
+      }
+      usernameOpt = user;
+    } else if (body.username !== undefined) {
+      usernameOpt = body.username.trim() === '' ? null : body.username;
+    }
+    if (body.tokenExpiresAt !== undefined && tokenOpt === undefined) {
+      expiresOpt = body.tokenExpiresAt.trim() === '' ? null : body.tokenExpiresAt;
+    }
+  }
+
+  const saved = await normalizeAndSaveGitOpsSettings(settings, {
+    token: tokenOpt,
+    username: usernameOpt,
+    tokenExpiresAt: expiresOpt,
+  });
+  const published = await publicGitOpsSettings(saved);
   await recordAudit({
     action: 'gitops.settings.update',
     actor: getActorEmail(req),
     actorRole: getActorRole(req),
-    summary: `Updated GitOps settings (${publicGitOpsSettings(settings).repoUrl} @ ${settings.branch})`,
+    summary: `Updated GitOps settings (${published.repoUrl} @ ${saved.branch})`,
     resourceType: 'gitops',
     details: {
-      branch: settings.branch,
-      pathPrefix: settings.pathPrefix,
-      syncIntervalSec: settings.syncIntervalSec,
-      enabled: settings.enabled,
+      branch: saved.branch,
+      pathPrefix: saved.pathPrefix,
+      syncIntervalSec: saved.syncIntervalSec,
+      enabled: saved.enabled,
+      authConfigured: published.authConfigured === true,
+      authExpiresAt: published.authExpiresAt,
+      authRotated: Boolean(body.clearAuth || (body.token && body.token.length > 0)),
     },
   });
-  res.json(publicGitOpsSettings(settings));
+  res.json(published);
 });
 
 router.post('/gitops/sync', requireRole('admin'), async (req, res) => {

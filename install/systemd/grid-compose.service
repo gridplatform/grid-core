@@ -8,8 +8,10 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/grid/grid-core
-# Hard-check install/.env then start (no skip flags)
+# Hard-check install/.env then start (no skip flags).
+# Source build (default):
 ExecStart=/bin/bash /opt/grid/grid-core/install/compose-up.sh -- up -d --remove-orphans
+# GHCR images: install.sh rewrites the next line to: compose-up.sh release -- up -d --remove-orphans
 ExecStop=/usr/bin/docker compose -f /opt/grid/grid-core/install/docker-compose.yml --env-file /opt/grid/grid-core/install/.env stop
 TimeoutStartSec=0
 

@@ -1,0 +1,29 @@
+{
+  "channels": {
+    "current": {
+      "ref": "v0.1.0",
+      "version": "0.1.0",
+      "imageTag": "current"
+    }
+  },
+  "components": ["grid-cli", "grid-core", "grid-ui", "grid-terraform"],
+  "releases": [
+    {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "date": "2026-10-16",
+      "channel": ["current"],
+      "components": {
+        "grid-cli": "v0.1.0",
+        "grid-core": "v0.1.0",
+        "grid-ui": "v0.1.0",
+        "grid-terraform": "v0.1.0"
+      },
+      "highlights": [
+        "Control plane: Sync, plan/apply/destroy releases, console, auth/RBAC",
+        "AWS console release surface + remote Terraform state backends",
+        "Compose / install.sh packaging with GHCR images"
+      ]
+    }
+  ]
+}

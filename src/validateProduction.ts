@@ -5,6 +5,7 @@ import {
   resolveTfBackendMode as resolveMode,
   type TfBackendMode,
 } from './lib/tfBackend';
+import { isSshGitUrl, peelGitRemoteUserinfo } from './lib/gitRemoteAuth';
 
 /**
  * Production boot gate (`npm run prod` / `npm start`).
@@ -272,16 +273,119 @@ function collectModuleBankFindings(activeVersion?: string): Finding[] {
   return out;
 }
 
-function collectGitopsFindings(): Finding[] {
-  if (process.env.GRID_GITOPS_REPO_URL?.trim()) return [];
-  return [
-    {
+function readGitopsSecretsFile(): {
+  username?: string;
+  token?: string;
+  tokenExpiresAt?: string;
+} {
+  const dataDir =
+    process.env.GRID_DATA_DIR?.trim() || path.join(process.cwd(), 'data');
+  const secretsPath = path.join(dataDir, 'gitops-secrets.json');
+  try {
+    if (!fs.existsSync(secretsPath)) return {};
+    const raw = JSON.parse(fs.readFileSync(secretsPath, 'utf8')) as {
+      username?: string;
+      token?: string;
+      tokenExpiresAt?: string;
+    };
+    return {
+      username: raw.username?.trim() || undefined,
+      token: raw.token?.trim() || undefined,
+      tokenExpiresAt: raw.tokenExpiresAt?.trim() || undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Read host Git HTTPS auth from env or GRID_DATA_DIR/gitops-secrets.json (Sources UI). */
+export function readProductionGitopsAuth(): {
+  username?: string;
+  token?: string;
+  expiresAt?: string;
+  source?: 'env' | 'secrets-file';
+} {
+  const envUser = process.env.GRID_GITOPS_USERNAME?.trim();
+  const envToken = process.env.GRID_GITOPS_TOKEN?.trim();
+  const envExp = process.env.GRID_GITOPS_TOKEN_EXPIRES_AT?.trim();
+  const file = readGitopsSecretsFile();
+
+  const username = envUser || file.username || undefined;
+  const token = envToken || file.token || undefined;
+  const expiresAt = envExp || file.tokenExpiresAt || undefined;
+
+  if (!token && !username && !expiresAt) return {};
+
+  return {
+    username,
+    token,
+    expiresAt,
+    source: envToken || envUser || envExp ? 'env' : 'secrets-file',
+  };
+}
+
+/**
+ * Production GitOps gate: remote URL required; HTTPS remotes also require
+ * username + host-issued token + expiry — no silent boot without credentials.
+ * SSH remotes rely on deploy keys on the host (no Grid token).
+ */
+export function collectGitopsFindings(): Finding[] {
+  const out: Finding[] = [];
+  const repoUrl = process.env.GRID_GITOPS_REPO_URL?.trim() || '';
+
+  if (!repoUrl) {
+    out.push({
       key: 'GRID_GITOPS_REPO_URL',
       found: '(not set)',
-      expect: 'git URL for desired-state (grid-config)',
-      fix: 'GRID_GITOPS_REPO_URL=https://github.com/<org>/grid-config.git',
-    },
-  ];
+      expect: 'git URL for intent repo (any Git host)',
+      fix: 'GRID_GITOPS_REPO_URL=https://git.example.com/<org>/intent.git',
+    });
+    return out;
+  }
+
+  if (isSshGitUrl(repoUrl)) {
+    return out;
+  }
+
+  // HTTPS — refuse production without username + token + expiry.
+  const peeled = peelGitRemoteUserinfo(repoUrl);
+  const auth = readProductionGitopsAuth();
+  const username = auth.username || peeled.username;
+  const hasToken = Boolean(auth.token || peeled.token);
+  const expiresAt = auth.expiresAt;
+
+  if (!username) {
+    out.push({
+      key: 'GRID_GITOPS_USERNAME',
+      found: '(not set)',
+      expect:
+        'HTTPS Git username for the host token (often `git`; GitLab `oauth2`, Bitbucket `x-token-auth`) — Admin → Sources or GRID_GITOPS_USERNAME',
+      fix: 'GRID_GITOPS_USERNAME=git',
+    });
+  }
+
+  if (!hasToken) {
+    out.push({
+      key: 'GRID_GITOPS_TOKEN',
+      found: '(not set)',
+      expect:
+        'host-issued PAT/deploy token for private HTTPS intent repos — Admin → Sources, or GRID_GITOPS_TOKEN (Grid does not mint tokens). Without a token, npm run prod will not start.',
+      fix:
+        'Set GRID_GITOPS_USERNAME=… GRID_GITOPS_TOKEN=… GRID_GITOPS_TOKEN_EXPIRES_AT=YYYY-MM-DD, or save all three in Admin → Sources (GRID_DATA_DIR/gitops-secrets.json). SSH URL + host deploy key is the alternative.',
+    });
+  }
+
+  if (!expiresAt) {
+    out.push({
+      key: 'GRID_GITOPS_TOKEN_EXPIRES_AT',
+      found: '(not set)',
+      expect:
+        'YYYY-MM-DD expiry of the host token (from your Git provider) — required in production with HTTPS auth',
+      fix: 'GRID_GITOPS_TOKEN_EXPIRES_AT=2027-01-15   # or set “Token valid until” in Admin → Sources',
+    });
+  }
+
+  return out;
 }
 
 /** Require Prometheus + Alertmanager URLs in production env. */
@@ -377,6 +481,20 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       process.env.GRID_MODULE_BANK_BRANCH,
     '(not set)'
   );
+  const gitopsAuth = readProductionGitopsAuth();
+  const gitopsAuthParts: string[] = [];
+  if (gitopsAuth.username) gitopsAuthParts.push(`user=${gitopsAuth.username}`);
+  else gitopsAuthParts.push('username missing');
+  if (gitopsAuth.token) {
+    gitopsAuthParts.push(`token present (${gitopsAuth.source || 'unknown'})`);
+  } else {
+    gitopsAuthParts.push(
+      "no HTTPS token — Without any token, I'm not moving forward."
+    );
+  }
+  if (gitopsAuth.expiresAt) gitopsAuthParts.push(`expires ${gitopsAuth.expiresAt}`);
+  else gitopsAuthParts.push('expiry missing');
+  const gitopsAuthLine = gitopsAuthParts.join(', ');
 
   throw new Error(
     `[grid-core] production boot refused — ${findings.length} setting(s) need fixing in .env\n` +
@@ -386,6 +504,7 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       `  module ref:   ${refFound}   ← must be a released tag (example: v0.1.0)\n` +
       `  tf backend:   ${display(process.env.GRID_TF_BACKEND, '(unset → local)')}\n` +
       `  gitops repo:  ${display(process.env.GRID_GITOPS_REPO_URL)}\n` +
+      `  gitops auth:  ${gitopsAuthLine}\n` +
       `  prometheus:   ${display(process.env.GRID_PROMETHEUS_URL)}\n` +
       `  alertmanager: ${display(process.env.GRID_ALERTMANAGER_URL)}\n` +
       `\n` +
@@ -395,7 +514,10 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       `Example production snippet (.env):\n` +
       `  GRID_MODULE_BANK=https://github.com/gridplatform/grid-terraform.git\n` +
       `  GRID_MODULE_BANK_REF=v0.1.0\n` +
-      `  GRID_GITOPS_REPO_URL=https://github.com/<org>/grid-config.git\n` +
+      `  GRID_GITOPS_REPO_URL=https://git.example.com/<org>/intent.git\n` +
+      `  GRID_GITOPS_USERNAME=git\n` +
+      `  GRID_GITOPS_TOKEN=<host-PAT-or-deploy-token>\n` +
+      `  GRID_GITOPS_TOKEN_EXPIRES_AT=2027-01-15\n` +
       `  GRID_TF_BACKEND=s3\n` +
       `  GRID_TF_STATE_BUCKET=mycompany-grid-tfstate\n` +
       `  GRID_TF_LOCK_TABLE=mycompany-grid-tflock\n` +
@@ -407,7 +529,7 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       `  GRID_MONITORING_CONFIG_DIR=./install/monitoring\n` +
       `\n` +
       `Dev: npm run dev + .env.development. Monitoring: install/monitoring/README.md\n` +
-      `Docs: grid-docs docs/install/remote-state.md · docs/install/dev-vs-prod.md`
+      `Docs: doc docs/Install/Remote_State.md · docs/Install/Dev_Vs_Prod.md · docs/Getting-Started/Your_Intent_Repository.md`
   );
 }
 

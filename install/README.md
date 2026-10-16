@@ -8,9 +8,10 @@ Guides: [grid-docs / docs/install](https://github.com/gridplatform/grid-docs/tre
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | Ubuntu installer (Compose by default; `GRID_USE_NATIVE=1` for systemd + nginx) |
+| `install.sh` | Ubuntu installer — set `GRID_REF` to the tag you want (Compose by default; `GRID_USE_NATIVE=1` for systemd + nginx) |
+| `releases.json` | Published releases index |
 | `docker-compose.yml` | Build `core` and `ui` from source |
-| `docker-compose.release.yml` | Run GHCR images (`lts` / `current` / exact version) |
+| `docker-compose.release.yml` | Run GHCR images (`current` / `lts` / exact version) |
 | `verify.sh` | Smoke-check `/health` and the UI |
 | `check-env.sh` | Hard-fail if `install/.env` is incomplete (no override) |
 | `compose-up.sh` | Production entry: `check-env.sh` then Compose up |

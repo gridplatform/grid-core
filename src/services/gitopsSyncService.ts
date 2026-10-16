@@ -11,9 +11,11 @@ import {
 } from '../store/memoryStore';
 import {
   gitopsCloneDir,
+  loadGitOpsSecrets,
   loadGitOpsSettings,
   saveGitOpsRuntime,
 } from '../store/gitopsStore';
+import { authenticatedGitRemoteUrl } from '../lib/gitRemoteAuth';
 import { hashContent } from './gitopsHash';
 import {
   environmentFromMetadata,
@@ -26,7 +28,14 @@ import { resolveUnderRoot } from '../lib/safePath';
 
 function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, env: process.env });
+    const child = spawn('git', args, {
+      cwd,
+      env: {
+        ...process.env,
+        // Avoid interactive prompts hanging Sync when auth is missing.
+        GIT_TERMINAL_PROMPT: '0',
+      },
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c) => {
@@ -38,6 +47,11 @@ function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: st
     child.on('error', reject);
     child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
   });
+}
+
+async function remoteUrlForSync(settings: GitOpsSettings): Promise<string> {
+  const secrets = await loadGitOpsSecrets();
+  return authenticatedGitRemoteUrl(settings.repoUrl, secrets);
 }
 
 function environmentFromConfig(cfg: Record<string, unknown>): string {
@@ -117,12 +131,15 @@ async function ensureClone(settings: GitOpsSettings): Promise<string> {
 
   if (await fs.pathExists(gitDir)) {
     if (settings.repoUrl) {
-      await runGit(['remote', 'set-url', 'origin', settings.repoUrl], root);
+      const remote = await remoteUrlForSync(settings);
+      await runGit(['remote', 'set-url', 'origin', remote], root);
       // GitOps clone is a mirror of origin — not a place for local edits.
       // Dirty trees (manual edits, old scripts, accidental writes) used to make
       // `pull --ff-only` skip forever. Always discard local tracked changes and
       // match origin/<branch>. Untracked paths (e.g. generated archive/) are kept.
       const fetch = await runGit(['fetch', 'origin', settings.branch], root);
+      // Drop credentials from the stored remote URL after fetch (secrets stay in data dir).
+      await runGit(['remote', 'set-url', 'origin', settings.repoUrl], root);
       if (fetch.code !== 0) {
         console.warn(
           `[gitops] fetch failed (${fetch.stderr || fetch.stdout || 'unknown'}). Keeping local tree.`
@@ -156,13 +173,14 @@ async function ensureClone(settings: GitOpsSettings): Promise<string> {
   }
 
   // Empty root + remote → clone into GRID_CONFIG_ROOT.
+  const remote = await remoteUrlForSync(settings);
   const clone = await runGit(
     [
       'clone',
       '--branch',
       settings.branch,
       '--single-branch',
-      settings.repoUrl,
+      remote,
       '.',
     ],
     root
@@ -170,6 +188,8 @@ async function ensureClone(settings: GitOpsSettings): Promise<string> {
   if (clone.code !== 0) {
     throw new Error(`git clone failed: ${clone.stderr || clone.stdout}`);
   }
+  // Persist a clean origin URL (token stays in gitops-secrets.json).
+  await runGit(['remote', 'set-url', 'origin', settings.repoUrl], root);
   return root;
 }
 

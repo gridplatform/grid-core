@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # Grid Platform — install control plane on a Linux VM (Ubuntu 22.04/24.04).
 #
-# Usage (as root or with sudo):
-#   curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo bash
-#   # or, from a clone:
-#   sudo bash install/install.sh
+# Set GRID_REF to the git tag (or branch) you want. Same ref is used for
+# grid-core / grid-ui / grid-cli. Example:
 #
-# Env overrides:
+#   export GRID_REF=v0.1.0
+#   curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/${GRID_REF}/install/install.sh | sudo -E bash
+#
+# Env:
 #   GRID_HOME=/opt/grid
-#   GRID_REF=main                 # git ref for core/ui/cli
+#   GRID_REF=v0.1.0              # git ref (default: main)
+#   GRID_VERSION=0.1.0           # optional exact GHCR image tag
+#   GRID_RELEASE_CHANNEL=current # or lts — used when GRID_VERSION unset (images mode)
+#   GRID_INSTALL_MODE=images|source  # default: images for version tags, source for main
 #   GRID_AUTH_ADMIN_EMAIL=...
-#   GRID_AUTH_ADMIN_PASSWORD=...  # required for non-interactive; else prompted
+#   GRID_AUTH_ADMIN_PASSWORD=... # required for non-interactive; else prompted
 #   GRID_MODULE_BANK_REF=v0.1.0
 #   GRID_GITOPS_REPO_URL=...
 #   GRID_TF_BACKEND=s3|gcs|azurerm (+ bucket/lock) — required (install/check-env.sh)
-#   GRID_USE_NATIVE=1             # systemd + nginx instead of Compose (default is Compose)
-#   GRID_USE_COMPOSE=0            # same as GRID_USE_NATIVE=1 (legacy alias invert)
-#   GRID_SKIP_SYSTEMD=1           # native path: clone+build only
+#   GRID_USE_NATIVE=1            # systemd + nginx instead of Compose (default is Compose)
+#   GRID_USE_COMPOSE=0           # same as GRID_USE_NATIVE=1 (legacy alias invert)
+#   GRID_SKIP_SYSTEMD=1          # native path: clone+build only
 
 set -euo pipefail
 
@@ -26,10 +30,39 @@ GRID_ORG="${GRID_ORG:-https://github.com/gridplatform}"
 GRID_HTTP_PORT="${GRID_HTTP_PORT:-80}"
 NODE_MAJOR="${NODE_MAJOR:-24}"
 TERRAFORM_VERSION="${TERRAFORM_VERSION:-1.9.8}"
+GRID_VERSION="${GRID_VERSION:-}"
+GRID_RELEASE_CHANNEL="${GRID_RELEASE_CHANNEL:-}"
+GRID_INSTALL_MODE="${GRID_INSTALL_MODE:-}"
 
 log()  { printf '\n==> %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 need_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root (sudo)"; }
+
+# Derive image channel / version from GRID_REF when not set explicitly.
+apply_ref_defaults() {
+  if [[ -z "$GRID_RELEASE_CHANNEL" ]]; then
+    if [[ "$GRID_REF" == *-lts ]]; then
+      GRID_RELEASE_CHANNEL=lts
+    else
+      GRID_RELEASE_CHANNEL=current
+    fi
+  fi
+  if [[ -z "$GRID_VERSION" && "$GRID_REF" =~ ^v[0-9] ]]; then
+    GRID_VERSION="${GRID_REF#v}"
+    GRID_VERSION="${GRID_VERSION%-lts}"
+  fi
+  if [[ -z "$GRID_INSTALL_MODE" ]]; then
+    if [[ "$GRID_REF" == "main" || "$GRID_REF" == "master" ]]; then
+      GRID_INSTALL_MODE=source
+    else
+      GRID_INSTALL_MODE=images
+    fi
+  fi
+  case "$GRID_INSTALL_MODE" in
+    images|source) ;;
+    *) die "GRID_INSTALL_MODE must be images or source (got: ${GRID_INSTALL_MODE})" ;;
+  esac
+}
 
 clone_or_update() {
   local url="$1" dest="$2" ref="$3"
@@ -110,8 +143,11 @@ GRID_HTTP_PORT=${GRID_HTTP_PORT}
 GRID_GITOPS_REPO_URL=${GRID_GITOPS_REPO_URL:-https://github.com/gridplatform/grid-config.git}
 GRID_GITOPS_BRANCH=${GRID_GITOPS_BRANCH:-main}
 GRID_MODULE_BANK=${GRID_MODULE_BANK:-https://github.com/gridplatform/grid-terraform.git}
-GRID_MODULE_BANK_REF=${GRID_MODULE_BANK_REF:-v0.1.0}
+GRID_MODULE_BANK_REF=${GRID_MODULE_BANK_REF:-${GRID_REF%-lts}}
 GRID_CLI_REF=${GRID_REF}
+GRID_UI_REF=${GRID_REF}
+GRID_RELEASE_CHANNEL=${GRID_RELEASE_CHANNEL:-current}
+GRID_VERSION=${GRID_VERSION:-}
 PORT=3000
 GRID_APP_ENV=production
 GRID_CLI_ROOT=${GRID_HOME}/grid-cli
@@ -147,8 +183,16 @@ install_compose_path() {
   clone_or_update "${GRID_ORG}/grid-core.git" "${GRID_HOME}/grid-core" "$GRID_REF"
   write_env "${GRID_HOME}/grid-core/install/.env"
   cd "${GRID_HOME}/grid-core"
-  # Production-only: check-env + compose (no skip / no dev profile)
-  bash install/compose-up.sh
+
+  local compose_file="install/docker-compose.yml"
+  if [[ "$GRID_INSTALL_MODE" == "images" ]]; then
+    log "Pulling GHCR release images (channel=${GRID_RELEASE_CHANNEL} version=${GRID_VERSION:--})"
+    bash install/compose-up.sh release
+    compose_file="install/docker-compose.release.yml"
+  else
+    log "Building from source @ ${GRID_REF}"
+    bash install/compose-up.sh
+  fi
 
   # Ensure stack is brought up again after reboot (in addition to container restart policies)
   cp "${GRID_HOME}/grid-core/install/systemd/grid-compose.service" /etc/systemd/system/grid-compose.service
@@ -156,14 +200,21 @@ install_compose_path() {
   if [[ "$GRID_HOME" != "/opt/grid" ]]; then
     sed -i "s|/opt/grid/grid-core|${GRID_HOME}/grid-core|g" /etc/systemd/system/grid-compose.service
   fi
+  # Point compose unit at GHCR release path when using images
+  if [[ "$GRID_INSTALL_MODE" == "images" ]]; then
+    sed -i \
+      -e 's|compose-up.sh -- up|compose-up.sh release -- up|g' \
+      -e 's|docker-compose.yml|docker-compose.release.yml|g' \
+      /etc/systemd/system/grid-compose.service
+  fi
   systemctl daemon-reload
   systemctl enable --now grid-compose.service
 
-  log "Grid is running in the background (Docker Compose)."
+  log "Grid is running in the background (Docker Compose, mode=${GRID_INSTALL_MODE})."
   log "  Survives SSH logout; restarts on reboot (docker + grid-compose + restart: unless-stopped)."
   log "  Open http://<this-host>:${GRID_HTTP_PORT}/  (admin: ${GRID_AUTH_ADMIN_EMAIL:-admin@grid.local})"
-  log "  Status:  docker compose -f ${GRID_HOME}/grid-core/install/docker-compose.yml ps"
-  log "  Logs:    docker compose -f ${GRID_HOME}/grid-core/install/docker-compose.yml logs -f --tail=100"
+  log "  Status:  docker compose -f ${GRID_HOME}/grid-core/${compose_file} ps"
+  log "  Logs:    docker compose -f ${GRID_HOME}/grid-core/${compose_file} logs -f --tail=100"
   log "  Stop:    systemctl stop grid-compose   # or: docker compose ... stop"
 }
 
@@ -240,12 +291,16 @@ install_systemd_path() {
 }
 
 main() {
+  apply_ref_defaults
+  log "Installing GRID_REF=${GRID_REF} mode=${GRID_INSTALL_MODE}"
+
   # Default: Compose on the VM. Native systemd path: GRID_USE_NATIVE=1
   local use_native="${GRID_USE_NATIVE:-0}"
   if [[ "${GRID_USE_COMPOSE:-1}" == "0" ]]; then
     use_native=1
   fi
   if [[ "$use_native" == "1" ]]; then
+    GRID_INSTALL_MODE=source
     install_systemd_path
   else
     install_compose_path

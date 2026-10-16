@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  collectGitopsFindings,
   collectMonitoringFindings,
   isGitRemoteBank,
   isReleaseModuleBankRef,
@@ -90,5 +91,53 @@ describe('validateProduction helpers', () => {
     else process.env.GRID_PROMETHEUS_URL = savedProm;
     if (savedAm === undefined) delete process.env.GRID_ALERTMANAGER_URL;
     else process.env.GRID_ALERTMANAGER_URL = savedAm;
+  });
+
+  it('HTTPS GitOps requires username + token + expiry; SSH does not', () => {
+    const savedUrl = process.env.GRID_GITOPS_REPO_URL;
+    const savedUser = process.env.GRID_GITOPS_USERNAME;
+    const savedTok = process.env.GRID_GITOPS_TOKEN;
+    const savedExp = process.env.GRID_GITOPS_TOKEN_EXPIRES_AT;
+
+    delete process.env.GRID_GITOPS_REPO_URL;
+    delete process.env.GRID_GITOPS_USERNAME;
+    delete process.env.GRID_GITOPS_TOKEN;
+    delete process.env.GRID_GITOPS_TOKEN_EXPIRES_AT;
+    expect(collectGitopsFindings().some((f) => f.key === 'GRID_GITOPS_REPO_URL')).toBe(
+      true
+    );
+
+    process.env.GRID_GITOPS_REPO_URL = 'git@github.com:org/intent.git';
+    expect(collectGitopsFindings()).toEqual([]);
+
+    process.env.GRID_GITOPS_REPO_URL = 'https://github.com/org/intent.git';
+    const missing = collectGitopsFindings();
+    expect(missing.some((f) => f.key === 'GRID_GITOPS_USERNAME')).toBe(true);
+    expect(missing.some((f) => f.key === 'GRID_GITOPS_TOKEN')).toBe(true);
+    expect(missing.some((f) => f.key === 'GRID_GITOPS_TOKEN_EXPIRES_AT')).toBe(
+      true
+    );
+    expect(missing.some((f) => /Without a token/i.test(f.expect))).toBe(true);
+
+    process.env.GRID_GITOPS_USERNAME = 'git';
+    process.env.GRID_GITOPS_TOKEN = 'ghp_test';
+    const noExpiry = collectGitopsFindings();
+    expect(noExpiry.some((f) => f.key === 'GRID_GITOPS_USERNAME')).toBe(false);
+    expect(noExpiry.some((f) => f.key === 'GRID_GITOPS_TOKEN')).toBe(false);
+    expect(noExpiry.some((f) => f.key === 'GRID_GITOPS_TOKEN_EXPIRES_AT')).toBe(
+      true
+    );
+
+    process.env.GRID_GITOPS_TOKEN_EXPIRES_AT = '2027-01-15';
+    expect(collectGitopsFindings()).toEqual([]);
+
+    if (savedUrl === undefined) delete process.env.GRID_GITOPS_REPO_URL;
+    else process.env.GRID_GITOPS_REPO_URL = savedUrl;
+    if (savedUser === undefined) delete process.env.GRID_GITOPS_USERNAME;
+    else process.env.GRID_GITOPS_USERNAME = savedUser;
+    if (savedTok === undefined) delete process.env.GRID_GITOPS_TOKEN;
+    else process.env.GRID_GITOPS_TOKEN = savedTok;
+    if (savedExp === undefined) delete process.env.GRID_GITOPS_TOKEN_EXPIRES_AT;
+    else process.env.GRID_GITOPS_TOKEN_EXPIRES_AT = savedExp;
   });
 });

@@ -39,6 +39,19 @@ require GRID_TF_BACKEND
 require GRID_PROMETHEUS_URL
 require GRID_ALERTMANAGER_URL
 
+# HTTPS intent remotes: username + token + expiry required — without them, we're not moving forward.
+# SSH (git@… / ssh://…) relies on deploy keys on the host instead.
+gitops_url="${GRID_GITOPS_REPO_URL:-}"
+if [[ -n "$gitops_url" ]]; then
+  if [[ "$gitops_url" =~ ^(git@|ssh://) ]]; then
+    :
+  else
+    require GRID_GITOPS_USERNAME
+    require GRID_GITOPS_TOKEN
+    require GRID_GITOPS_TOKEN_EXPIRES_AT
+  fi
+fi
+
 pw="${GRID_AUTH_ADMIN_PASSWORD:-}"
 if [[ "$pw" =~ ^(change-me|changeme|password|admin|change-me-before-production)$ ]]; then
   problems+=("GRID_AUTH_ADMIN_PASSWORD is still a placeholder")
