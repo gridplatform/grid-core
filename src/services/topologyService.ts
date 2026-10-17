@@ -1,5 +1,47 @@
 import type { Infrastructure, TopologyProvider } from '../types/api';
 import { healthFromResourceStatus } from './monitoringService';
+import { resolveResourceType } from './resourceType';
+
+export type TopologyLayer =
+  | 'waf'
+  | 'network'
+  | 'loadbalancer'
+  | 'application'
+  | 'data';
+
+/**
+ * Ring a catalog type sits on. The type string is the configuration —
+ * not a rewrite into one cloud's resource names.
+ */
+export function layerForResourceType(type: string | undefined): TopologyLayer {
+  const t = (type || '').trim().toLowerCase();
+  if (!t) return 'application';
+  if (/waf|shield|cloud-armor|guardduty|security-hub|inspector/.test(t)) {
+    return 'waf';
+  }
+  if (
+    /^(alb|nlb|clb|gclb|elb|slb)$|load-balancer|loadbalancer|api-gateway|apigateway/.test(
+      t
+    )
+  ) {
+    return 'loadbalancer';
+  }
+  if (
+    /vpc|subnet|vnet|vswitch|nat-gateway|vpn|dns|route53|gateway|peering|transit|nsg|security-group|eip|cdn|cloudfront|firewall/.test(
+      t
+    )
+  ) {
+    return 'network';
+  }
+  if (
+    /rds|sql|dynamo|redis|mongo|postgres|mysql|bucket|s3|gcs|storage|disk|volume|bigquery|warehouse|elasticache|memorystore|spanner|firestore|bigtable|cache/.test(
+      t
+    )
+  ) {
+    return 'data';
+  }
+  return 'application';
+}
 
 /** Build a console-compatible topology view from stored infrastructures. */
 export function buildTopologyFromInfrastructures(
@@ -23,42 +65,33 @@ export function buildTopologyFromInfrastructures(
         region?: string;
         resources?: Array<{ type: string; name: string; cidr?: string }>;
       };
-      const vpcResource = cfg.resources?.find((r) => r.type === 'vpc');
-      const region = cfg.region || 'ap-south-1';
-      const resources = (cfg.resources || []).map((r) => ({
+      const resourceType = resolveResourceType({
+        configJson: infra.configJson,
+        gitPath: infra.gitPath,
+        name: infra.name,
+      });
+      const region = cfg.region || '';
+      const typedResources =
+        cfg.resources && cfg.resources.length > 0
+          ? cfg.resources
+          : [{ type: resourceType, name: infra.name }];
+      const resources = typedResources.map((r) => ({
         id: `${infra.id}-${r.name}`,
         name: r.name,
-        type:
-          r.type === 'ec2-instance' || r.type === 'compute-engine-instance' || r.type === 'virtual-machine' || r.type === 'compute-instance'
-            ? r.type === 'compute-engine-instance'
-              ? 'gce-instance'
-              : r.type === 'ec2-instance' || providerType === 'AWS'
-                ? 'ec2-instance'
-                : r.type
-            : r.type === 'vpc' || r.type === 'network'
-              ? 'internet-gateway'
-              : r.type === 'subnet'
-                ? 'nat-gateway'
-                : r.type,
-        layer:
-          r.type === 'ec2-instance' ||
-          r.type === 'compute-engine-instance' ||
-          r.type === 'virtual-machine' ||
-          r.type === 'compute-instance'
-            ? 'application'
-            : r.type === 'vpc' || r.type === 'network' || r.type === 'subnet'
-              ? 'network'
-              : 'application',
+        type: r.type,
+        layer: layerForResourceType(r.type),
         status: healthFromResourceStatus(infra.status),
         connections: [] as string[],
         meta: r.cidr ? { cidr: r.cidr } : undefined,
       }));
+      const network = typedResources.find((r) => r.cidr);
 
       return {
         id: `vpc-${infra.id}`,
-        name: vpcResource?.name || infra.name,
+        name: infra.name,
+        resourceType,
         region,
-        cidr: vpcResource?.cidr || '0.0.0.0/0',
+        cidr: network?.cidr || '',
         providerId,
         resources,
         vpcConnections: [] as [],

@@ -105,6 +105,8 @@ export interface TopologyResource {
 export interface TopologyVpc {
   id: string;
   name: string;
+  /** Catalog type from resolveResourceType (metadata.kind, primary resource, or git path). */
+  resourceType?: string;
   region: string;
   cidr: string;
   providerId: string;
