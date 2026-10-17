@@ -102,7 +102,15 @@ export interface TopologyResource {
   meta?: Record<string, string>;
 }
 
-export interface TopologyVpc {
+export interface TopologyEnvConnection {
+  /** Circle id of the other environment (`env-provider-<cloud>-<environment>`). */
+  targetId: string;
+  type: 'peering' | 'vpn' | 'transit-gateway' | 'internet';
+  label?: string;
+}
+
+/** One circle: a single provider in a single environment. */
+export interface TopologyEnvironment {
   id: string;
   name: string;
   /** Catalog type from resolveResourceType (metadata.kind, primary resource, or git path). */
@@ -111,7 +119,8 @@ export interface TopologyVpc {
   cidr: string;
   providerId: string;
   resources: TopologyResource[];
-  vpcConnections: [];
+  /** Other circles this environment peers with. */
+  connections: TopologyEnvConnection[];
   totalResources: number;
   healthCounts: { healthy: number; warning: number; critical: number };
   status: HealthStatus;
@@ -121,7 +130,7 @@ export interface TopologyProvider {
   id: string;
   name: string;
   type: CloudProviderType;
-  vpcs: TopologyVpc[];
+  environments: TopologyEnvironment[];
   totalResources: number;
   healthCounts: { healthy: number; warning: number; critical: number };
 }

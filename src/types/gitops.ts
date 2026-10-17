@@ -36,8 +36,8 @@ export interface GitOpsSettings {
 /**
  * HTTPS credentials for private remotes (any Git provider).
  * Stored under GRID_DATA_DIR/gitops-secrets.json — token never returned by the API.
- * Grid does **not** mint these tokens; operators create a PAT / deploy token /
- * app password on GitHub, GitLab, Bitbucket, Gitea, etc. and paste it here.
+ * Grid does not mint these tokens. Create a personal access token, deploy token,
+ * or app password on the Git host and paste it here.
  */
 export interface GitOpsSecrets {
   /**

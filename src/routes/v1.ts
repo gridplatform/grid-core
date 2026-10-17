@@ -747,6 +747,12 @@ router.post('/deployments/:id/retry', async (req, res) => {
   res.status(202).json(next);
 });
 
+function topologyProject(req: { query: { project?: unknown } }): string | undefined {
+  return typeof req.query.project === 'string' && req.query.project.trim()
+    ? req.query.project.trim()
+    : undefined;
+}
+
 router.get('/topology/providers', async (req, res) => {
   const existing = await listInfrastructures();
   if (existing.length === 0) {
@@ -755,8 +761,12 @@ router.get('/topology/providers', async (req, res) => {
     void syncInfrastructuresFromConfigRoot();
   }
   const access = await accessForRequest(req);
+  const project = topologyProject(req);
   const raw = (await listInfrastructures()).filter((i) => i.status !== 'destroyed');
-  const items = access ? filterInfrastructuresByAccess(access, raw) : raw;
+  const visible = access ? filterInfrastructuresByAccess(access, raw) : raw;
+  const items = project
+    ? visible.filter((i) => (i.project || '').toLowerCase() === project.toLowerCase())
+    : visible;
   res.json(buildTopologyFromInfrastructures(items));
 });
 
@@ -767,7 +777,7 @@ router.get('/topology/providers/:id/vpcs', async (req, res) => {
   const items = access ? filterInfrastructuresByAccess(access, raw) : raw;
   const providers = buildTopologyFromInfrastructures(items);
   const provider = providers.find((p) => p.id === req.params.id);
-  res.json(provider?.vpcs || []);
+  res.json(provider?.environments || []);
 });
 
 router.get('/topology/vpcs/:id/resources', async (req, res) => {
@@ -777,9 +787,9 @@ router.get('/topology/vpcs/:id/resources', async (req, res) => {
   const items = access ? filterInfrastructuresByAccess(access, raw) : raw;
   const providers = buildTopologyFromInfrastructures(items);
   for (const p of providers) {
-    const vpc = p.vpcs.find((v) => v.id === req.params.id);
-    if (vpc) {
-      res.json(vpc.resources);
+    const environment = p.environments.find((v) => v.id === req.params.id);
+    if (environment) {
+      res.json(environment.resources);
       return;
     }
   }

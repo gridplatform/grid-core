@@ -1,5 +1,5 @@
 /**
- * Provider-agnostic HTTPS Git auth helpers (GitHub, GitLab, Bitbucket, Gitea, …).
+ * HTTPS Git auth for any host.
  * SSH URLs are left unchanged — host keys / deploy keys handle auth.
  */
 
