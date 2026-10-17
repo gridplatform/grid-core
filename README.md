@@ -4,7 +4,7 @@ Runs Grid on your machine: the HTTP API behind the console, GitOps sync for desi
 
 When you click plan or apply in the UI, core calls **[grid-cli](https://github.com/gridplatform/grid-cli)** to turn JSON into Terraform, then runs Terraform itself.
 
-**Self-host:** [`install/`](./install/) · [grid-docs → Install](https://github.com/gridplatform/grid-docs/tree/main/docs/install)
+**Self-host:** [`install/`](./install/) · [grid-docs → Install](https://gridplatform.github.io/doc/Install/Overview)
 
 ## Quick start (Compose)
 
@@ -21,7 +21,7 @@ export GRID_AUTH_ADMIN_PASSWORD='choose-a-strong-password'
 curl -fsSL https://raw.githubusercontent.com/gridplatform/grid-core/main/install/install.sh | sudo -E bash
 ```
 
-Create **[remote Terraform state](https://github.com/gridplatform/grid-docs/blob/main/docs/install/remote-state.md)** before real applies. Prefer an instance role / service account on the host over long-lived cloud keys.
+Create **[remote Terraform state](https://gridplatform.github.io/doc/Install/Remote_State)** before real applies. Prefer an instance role / service account on the host over long-lived cloud keys.
 
 ## Development
 
@@ -46,7 +46,7 @@ API default: `http://localhost:3000`.
 
 [grid-config](https://github.com/gridplatform/grid-config) is a **sample** layout only. For real use, create your own repository and point `GRID_GITOPS_REPO_URL` at it.
 
-Full env list: [grid-docs → Configuration](https://github.com/gridplatform/grid-docs/blob/main/docs/install/configuration.md) · [`install/.env.example`](./install/.env.example)
+Full env list: [grid-docs → Configuration](https://gridplatform.github.io/doc/Install/Configuration) · [`install/.env.example`](./install/.env.example)
 
 ## Related repositories
 
@@ -55,7 +55,7 @@ Full env list: [grid-docs → Configuration](https://github.com/gridplatform/gri
 | [grid-ui](https://github.com/gridplatform/grid-ui) | Browser console |
 | [grid-cli](https://github.com/gridplatform/grid-cli) | Command-line tool (also used by this API) |
 | [grid-terraform](https://github.com/gridplatform/grid-terraform) | Terraform modules |
-| [grid-docs](https://github.com/gridplatform/grid-docs) | Guides |
+| [grid-docs](https://gridplatform.github.io/doc/) | Guides |
 
 ## License
 

@@ -542,6 +542,6 @@ export function assertTfBackendConfigOrThrow(): void {
   throw new Error(
     `[grid-core] incomplete remote Terraform state config:\n\n` +
       formatFindings(findings) +
-      `\n\nSee grid-docs docs/install/remote-state.md`
+      `\n\nSee https://gridplatform.github.io/doc/Install/Remote_State`
   );
 }
