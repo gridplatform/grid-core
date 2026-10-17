@@ -64,8 +64,39 @@ jobs:
             GRID_CLI_REF=${{ steps.meta.outputs.cli_ref }}
           tags: ${{ steps.meta.outputs.tags }}
 
+      - name: Write release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Fresh notes every publish. Updating a release with generated notes
+          # appends another Full Changelog line, so the body is replaced below.
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f "tag_name=${GITHUB_REF_NAME}" \
+            --jq .body > /tmp/generated.md
+          python3 - << 'PY'
+          from pathlib import Path
+          lines = Path("/tmp/generated.md").read_text().splitlines()
+          body, changelogs = [], []
+          for line in lines:
+              plain = line.replace("*", "").strip().lower()
+              if plain.startswith("full changelog:"):
+                  changelogs.append(line.strip())
+              else:
+                  body.append(line)
+          while body and not body[-1].strip():
+              body.pop()
+          if changelogs:
+              body += ["", changelogs[-1]]
+          Path("release-notes.md").write_text("\n".join(body).rstrip() + "\n")
+          PY
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.meta.outputs.is_lts == 'true' && format('v{0} LTS', steps.meta.outputs.version) || format('v{0}', steps.meta.outputs.version) }}
-          generate_release_notes: true
+          body_path: release-notes.md
+          append_body: false
