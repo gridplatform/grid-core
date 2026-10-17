@@ -25,6 +25,8 @@ const PROVIDER_LABEL_GROUPS: ReadonlyArray<{
   { label: 'Rancher', aliases: ['rancher'] },
   { label: 'Confluent Cloud', aliases: ['confluent-cloud'] },
   { label: 'Redis Enterprise', aliases: ['redis-enterprise'] },
+  { label: 'Utho Cloud', aliases: ['utho'] },
+  { label: 'MongoDB', aliases: ['mongodb', 'mongodbatlas', 'atlas'] },
   { label: 'Kubernetes', aliases: ['kubernetes', 'k8s'] },
 ];
 

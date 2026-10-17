@@ -47,6 +47,7 @@ describe('tfBackend + archive mirror coverage', () => {
       'ibm',
       'ctrls',
       'yotta',
+      'utho',
     ];
     for (const folder of infraFolders) {
       const entry = MODULE_BANK_ARCHIVE_BACKEND[folder];

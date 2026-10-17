@@ -54,6 +54,7 @@ const BACKEND_ALIAS_GROUPS: ReadonlyArray<{
       'ibmcloud',
       'ctrls',
       'yotta',
+      'utho',
     ],
   },
 ];
@@ -125,7 +126,7 @@ const ARCHIVE_ENDPOINT_RULES: readonly EndpointRule[] = [
 /**
  * Default S3-compatible API endpoint for archive mirror (and hints for ops).
  * Returns undefined when the operator must set GRID_TF_S3_ENDPOINT explicitly
- * (IBM COS, CtrlS, Yotta, MinIO, custom).
+ * (IBM COS, CtrlS, Yotta, Utho, MinIO, custom).
  */
 export function defaultArchiveS3Endpoint(opts?: {
   alias?: string;
@@ -195,10 +196,12 @@ export const MODULE_BANK_ARCHIVE_BACKENDS: readonly ModuleBankArchiveEntry[] = [
   { folder: 'ibm', mode: 's3compat', notes: 'IBM COS (S3 API) — set GRID_TF_S3_ENDPOINT' },
   { folder: 'ctrls', mode: 's3compat', notes: 'CtrlS object store — set GRID_TF_S3_ENDPOINT' },
   { folder: 'yotta', mode: 's3compat', notes: 'Yotta object store — set GRID_TF_S3_ENDPOINT' },
+  { folder: 'utho', mode: 's3compat', notes: 'Utho object store — set GRID_TF_S3_ENDPOINT' },
   { folder: 'openshift', mode: 's3', notes: 'use underlying cloud backend' },
   { folder: 'rancher', mode: 's3', notes: 'use underlying cloud backend' },
   { folder: 'confluent-cloud', mode: 's3', notes: 'use underlying cloud backend' },
   { folder: 'redis-enterprise', mode: 's3', notes: 'use underlying cloud backend' },
+  { folder: 'mongodb', mode: 's3', notes: 'use underlying cloud backend' },
 ];
 
 /** Lookup helper (folder → entry). */

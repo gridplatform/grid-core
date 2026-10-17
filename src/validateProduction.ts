@@ -101,7 +101,7 @@ function collectTfFindings(): Finding[] {
         key: 'GRID_TF_S3_ENDPOINT',
         found: '(not set)',
         expect:
-          'S3-compatible API endpoint (required for ibm/ctrls/yotta/minio; huawei/ovh/otc can derive from GRID_TF_STATE_REGION)',
+          'S3-compatible API endpoint (required for ibm/ctrls/yotta/utho/minio; huawei/ovh/otc can derive from GRID_TF_STATE_REGION)',
         fix: 'GRID_TF_S3_ENDPOINT=https://obs.cn-north-1.myhuaweicloud.com',
       });
     }

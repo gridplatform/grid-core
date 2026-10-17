@@ -46,6 +46,8 @@ const KNOWN_CLOUDS = new Set([
   'openshift',
   'confluent-cloud',
   'redis-enterprise',
+  'utho',
+  'mongodb',
 ]);
 
 export interface ProjectDto {
