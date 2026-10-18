@@ -1,6 +1,6 @@
 [Unit]
 Description=Grid Core API
-Documentation=https://github.com/gridplatform/grid-docs
+Documentation=https://gridplatform.org/doc/
 After=network-online.target
 Wants=network-online.target
 

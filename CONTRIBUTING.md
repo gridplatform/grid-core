@@ -157,7 +157,7 @@ When suggesting features:
 
 ## 📚 Resources
 
-- [Grid Platform Documentation](https://docs.gridplatform.org)
+- [Grid Platform Documentation](https://gridplatform.org/doc/)
 - [TypeScript Documentation](https://www.typescriptlang.org/docs/)
 - [Express.js Documentation](https://expressjs.com/)
 - [Jest Documentation](https://jestjs.io/docs/getting-started)

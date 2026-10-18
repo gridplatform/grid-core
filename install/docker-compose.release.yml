@@ -4,7 +4,7 @@
 #   bash install/compose-up.sh release     # runs check-env.sh then compose
 #
 # Image tag: GRID_VERSION if set, otherwise GRID_RELEASE_CHANNEL (default current).
-# Docs: https://gridplatform.github.io/doc/Install/Releases
+# Docs: https://gridplatform.org/doc/Install/Releases
 
 name: grid
 

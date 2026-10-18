@@ -1,6 +1,6 @@
 [Unit]
 Description=Grid Console (UI)
-Documentation=https://github.com/gridplatform/grid-docs
+Documentation=https://gridplatform.org/doc/
 After=network-online.target grid-core.service
 Wants=network-online.target
 

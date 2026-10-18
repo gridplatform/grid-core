@@ -2,7 +2,7 @@
 
 Compose, scripts, and systemd units for self-hosting Grid.
 
-Guides: [grid-docs / docs/install](https://gridplatform.github.io/doc/Install/Overview)
+Guides: [grid-docs / docs/install](https://gridplatform.org/doc/Install/Overview)
 
 ## Layout
 
@@ -23,8 +23,8 @@ Guides: [grid-docs / docs/install](https://gridplatform.github.io/doc/Install/Ov
 | `monitoring/` | **systemd** Prometheus + Alloy (not Compose) — survives Grid stop/down |
 | `../Dockerfile` | Core image (CLI + Terraform) |
 
-Remote state before apply: [remote-state.md](https://gridplatform.github.io/doc/Install/Remote_State).  
-Channels and tags: [releases.md](https://gridplatform.github.io/doc/Install/Releases).
+Remote state before apply: [remote-state.md](https://gridplatform.org/doc/Install/Remote_State).  
+Channels and tags: [releases.md](https://gridplatform.org/doc/Install/Releases).
 
 ## Docker Compose
 

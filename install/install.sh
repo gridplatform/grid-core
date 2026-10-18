@@ -287,7 +287,7 @@ install_systemd_path() {
   log "  API health: http://<this-host>/health"
   log "  Status: systemctl status grid-core nginx"
   log "  Logs:   journalctl -u grid-core -f"
-  log "Docs: https://github.com/gridplatform/grid-docs/blob/main/docs/install/vm.md"
+  log "Docs: https://gridplatform.org/doc/Install/VM"
 }
 
 main() {

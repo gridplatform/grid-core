@@ -529,7 +529,7 @@ export function assertProductionReady(opts: ProductionAssertOptions = {}): void 
       `  GRID_MONITORING_CONFIG_DIR=./install/monitoring\n` +
       `\n` +
       `Dev: npm run dev + .env.development. Monitoring: install/monitoring/README.md\n` +
-      `Docs: doc docs/Install/Remote_State.md · docs/Install/Dev_Vs_Prod.md · docs/Getting-Started/Your_Intent_Repository.md`
+      `Docs: https://gridplatform.org/doc/Install/Remote_State · https://gridplatform.org/doc/Install/Dev_Vs_Prod · https://gridplatform.org/doc/Getting-Started/Your_Intent_Repository`
   );
 }
 
@@ -542,6 +542,6 @@ export function assertTfBackendConfigOrThrow(): void {
   throw new Error(
     `[grid-core] incomplete remote Terraform state config:\n\n` +
       formatFindings(findings) +
-      `\n\nSee https://gridplatform.github.io/doc/Install/Remote_State`
+      `\n\nSee https://gridplatform.org/doc/Install/Remote_State`
   );
 }
