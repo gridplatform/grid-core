@@ -2,7 +2,7 @@
 
 > **Production status (TF-first release):** In-cluster **Workloads** entry points
 > are gated off (UI `productFlags.kubernetesWorkloads`, API rejects
-> `engine=kubernetes`). Terraform **clusters / node pools** (EKS, GKE, …) stay
+> `engine=kubernetes`). Terraform **clusters, node groups, and node pools** (EKS node groups, GKE node pools, …) stay
 > available under Infrastructure. Argo code under `src/services/argo/` remains
 > for a later release — do not delete it.
 
@@ -12,15 +12,15 @@ or change one piece without touching a thousand others.
 | Layer | Console | Engine | Example | Path sketch |
 |-------|---------|--------|---------|-------------|
 | Cluster | Infrastructure | Terraform | `eks`, `gke`, `aks` | `…/eks/my-cluster.json` |
-| Node pool | Infrastructure | Terraform | `eks-node-group`, `gke-node-pool` | `…/eks-node-group/workers-a.json` |
+| Node group / node pool | Infrastructure | Terraform | `eks-node-group`, `gke-node-pool` | `…/eks-node-group/workers-a.json` |
 | Workload | Workloads / Releases | **Argo CD** (OpenShift GitOps OK) | `workload`, `helm-release` | `…/workloads/…` or API deploy |
 
 ## Rules
 
 1. **One JSON per cluster** — control plane only (Terraform).
-2. **One JSON per node pool** — destroy one pool without the cluster or siblings.
+2. **One JSON per node group or node pool** — destroy one without the cluster or siblings.
 3. **Workloads never live in the cluster JSON** — they are Argo `Application` CRs.
-4. Node pool files name the cluster (`cluster_name` / `metadata.clusterRef`).
+4. Node group and node pool files name the cluster (`cluster_name` / `metadata.clusterRef`).
 5. **GitOps everywhere** — same Argo Application CRD for upstream Argo CD and
    OpenShift GitOps. Grid does not `kubectl apply` app manifests; Argo reconciles.
 

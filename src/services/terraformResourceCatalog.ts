@@ -74,6 +74,7 @@ export const TERRAFORM_RESOURCE_TYPES: Record<TerraformFamily, string[]> = {
   'kubernetes-cluster': [
     'eks',
     'eks-node-group',
+    'gpu-node-group',
     'kubernetes-engine',
     'gke',
     'gke-autopilot',
